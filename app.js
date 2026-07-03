@@ -1,4 +1,4 @@
-/* 山めし帳 — 食事ログPWA */
+/* foodlog — 食事ログPWA */
 "use strict";
 
 const FLOOR = 100, CEILING = 120;
@@ -217,7 +217,7 @@ async function fetchBakao(key) {
 現在時刻：${hh}:${mm}
 時間帯の扱い（最重要）：${phaseNote}
 
-目標：たんぱく質は床100g（毎日必達）、天井120g（運動日のみ目指す）。糖質の目安は休養日200g前後、運動日280g前後。
+目標：たんぱく質は基準100g（毎日必達）、運動日は120gを目標にする（120gは上限ではなく、超えても全く問題ない）。糖質の目安は休養日200g前後、運動日280g前後。
 
 対象日（${dateLabel}・${day.dayType === "active" ? "運動日" : "休養日"}）のデータ：
 - たんぱく質：${total}g（目標${target}g）
@@ -397,8 +397,8 @@ function renderLog() {
     </div>
 
     <div class="daytype">
-      <button class="dt rest ${day.dayType==="rest"?"on":""}" data-daytype="rest">休養日 · 床100g</button>
-      <button class="dt active ${day.dayType==="active"?"on":""}" data-daytype="active">運動日 · 天井120g</button>
+      <button class="dt rest ${day.dayType==="rest"?"on":""}" data-daytype="rest">休養日 · 基準100g</button>
+      <button class="dt active ${day.dayType==="active"?"on":""}" data-daytype="active">運動日 · 目標120g</button>
     </div>
 
     <div class="gaugewrap">
@@ -410,15 +410,15 @@ function renderLog() {
       <div class="gmain">
         <div class="glabel">たんぱく質</div>
         <div><span class="gnum mono" style="color:${barColor}">${total}</span><span class="gunit mono"> g</span></div>
-        <div class="gtarget">目標 ${target}g（${day.dayType==="active"?"天井":"床"}）</div>
+        <div class="gtarget">今日の目標 ${target}g</div>
         <div class="statusrow">
           <span class="box" style="border-color:var(--green);${hitFloor?"background:var(--green);color:var(--bg)":""}">${hitFloor?"✓":""}</span>
-          <span>床 100g</span>
+          <span>基準 100g</span>
           <span class="detail mono" style="color:${hitFloor?"var(--green)":"var(--muted)"}">${hitFloor?"到達 · 合格":`あと ${FLOOR-total}g`}</span>
         </div>
         <div class="statusrow" style="opacity:${day.dayType==="active"?1:.5}">
           <span class="box" style="border-color:var(--amber);${hitCeil?"background:var(--amber);color:var(--bg)":""}">${hitCeil?"✓":""}</span>
-          <span>天井 120g</span>
+          <span>運動日目標 120g</span>
           <span class="detail mono" style="color:${hitCeil?"var(--amber)":"var(--muted)"}">${hitCeil?"到達":`あと ${CEILING-total}g`}</span>
         </div>
         ${wavg != null ? `<div class="weekavg">直近7日平均　<span class="mono" style="color:var(--text);font-size:14px">${wavg}g</span></div>` : ""}
@@ -542,14 +542,14 @@ function renderReview() {
     </div>
     <div class="sumgrid">
       <div class="sumcard"><div class="sumlabel">平均たんぱく質</div><div><span class="sumval mono" style="color:${avgP>=FLOOR?"var(--green)":"var(--ice)"}">${avgP}</span><span class="sumunit mono"> g</span></div><div class="sumnote">記録 ${logged.length}日</div></div>
-      <div class="sumcard"><div class="sumlabel">床100g 達成</div><div><span class="sumval mono" style="color:var(--green)">${floorDays}</span><span class="sumunit mono">/${logged.length}日</span></div><div class="sumnote">合格した日数</div></div>
+      <div class="sumcard"><div class="sumlabel">基準100g 達成</div><div><span class="sumval mono" style="color:var(--green)">${floorDays}</span><span class="sumunit mono">/${logged.length}日</span></div><div class="sumnote">合格した日数</div></div>
       <div class="sumcard"><div class="sumlabel">食後散歩</div><div><span class="sumval mono" style="color:var(--ice)">${walkDays}</span><span class="sumunit mono"> 日</span></div><div class="sumnote">血糖対策</div></div>
       <div class="sumcard"><div class="sumlabel">魚(オメガ3)</div><div><span class="sumval mono" style="color:var(--ice)">${om3Days}</span><span class="sumunit mono"> 日</span></div><div class="sumnote">緑黄${vegDays}·繊維${fiDays}日</div></div>
     </div>
     <div class="chartbox">
       <div class="seclabel">たんぱく質の推移</div>
       ${proteinChart(days)}
-      <div class="chartnote">緑の破線＝床100g／橙線＝天井120g</div>
+      <div class="chartnote">緑の破線＝基準100g／橙線＝運動日目標120g</div>
     </div>
     <div class="chartbox">
       <div class="seclabel">⚖️ 体重の推移</div>
@@ -646,7 +646,7 @@ function renderSettings() {
       <div class="card setbox">
         <div class="settitle">ℹ️ このアプリについて</div>
         <div class="setdesc">
-          山めし帳 — たんぱく質 床100g／天井120g（運動日）方式の食事ログ。<br>
+          foodlog — たんぱく質 基準100g／運動日目標120g方式の食事ログ。<br>
           糖質目安：休養日200g・運動日280g。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週。<br>
           データ保存：この端末のみ（サーバーには何も送りません）。
         </div>
