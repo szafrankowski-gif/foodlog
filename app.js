@@ -7,6 +7,29 @@ const DATA_KEY = "mealog:data";
 const API_KEY_KEY = "mealog:apikey";
 const MODEL = "claude-sonnet-4-6";
 
+const DAY_LABEL = { rest: "休養", trainA: "筋トレA", trainB: "筋トレB", climb: "登攀・柔術", mountain: "山行" };
+const DAY_SHORT = { trainA: "筋A", trainB: "筋B", climb: "登", mountain: "山" };
+const isActive = (t) => !!t && t !== "rest";
+
+const MENU = {
+  trainA: [
+    { id: "rdl",     name: "KB RDL",             spec: "16kg 10×3・3秒下ろし" },
+    { id: "goblet",  name: "ゴブレットスクワット", spec: "16kg 10×3・下で2秒" },
+    { id: "swing",   name: "KBスイング",          spec: "16kg 15×3" },
+    { id: "cossack", name: "コサックスクワット",   spec: "左右6×3" },
+    { id: "calf",    name: "片脚カーフレイズ",     spec: "KB保持 12×2" },
+  ],
+  trainB: [
+    { id: "pullup",  name: "懸垂",               spec: "できる回数×3" },
+    { id: "row",     name: "片手ロウ",           spec: "8-10kg 10×3" },
+    { id: "pushup",  name: "PUバー腕立て",        spec: "10×3" },
+    { id: "ohp",     name: "ショルダープレス",     spec: "中立 8-10kg 10×3" },
+    { id: "extrot",  name: "外旋（腱板）",         spec: "2-3kg 15×3" },
+    { id: "plank",   name: "肘つきプランク",       spec: "30秒×3" },
+    { id: "neck",    name: "首アイソメ",           spec: "前後左右 各10秒×3" },
+  ],
+};
+
 const PACE = [
   { key: "saba",  label: "鯖缶",         target: 3, color: "#5FC9DE" },
   { key: "fish",  label: "生魚・別魚種", target: 1, color: "#5FC9DE" },
@@ -41,7 +64,7 @@ const SEED = {
     { name: "ナムル・キムチ・海苔・サンチュ", p: 5, c: 8, veg: true, fiber: true },
     { name: "スープ", p: 2, c: 3 }, { name: "ポップコーン", p: 3, c: 18 },
   ] },
-  "2026-07-02": { dayType: "active", sleep: null, walked: false, weight: null, comment: null, foods: [
+  "2026-07-02": { dayType: "climb", sleep: null, walked: false, weight: null, comment: null, foods: [
     { name: "バナナ", p: 1, c: 27 },
     { name: "鯖缶（うどん）", p: 20, c: 0, omega3: true, cat: "saba" },
     { name: "うどん", p: 6, c: 50 },
@@ -83,6 +106,9 @@ function load() {
   let stored = null;
   try { const raw = localStorage.getItem(DATA_KEY); if (raw) stored = JSON.parse(raw); } catch (e) {}
   data = Object.assign({}, SEED, stored || {});
+  for (const k of Object.keys(data)) {
+    if (data[k] && data[k].dayType === "active") data[k].dayType = "climb";
+  }
   save();
 }
 function save() {
@@ -183,7 +209,7 @@ ${hint ? "補足メモ：" + hint + "\n" : ""}${NUTRITION_RULES}` },
 async function fetchBakao(key) {
   const day = getDay(key);
   const total = sumP(day), carbs = sumC(day);
-  const target = day.dayType === "active" ? CEILING : FLOOR;
+  const target = isActive(day.dayType) ? CEILING : FLOOR;
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOmega3 = day.foods.some((f) => f.omega3);
   const foodList = day.foods.map((f) => `${f.name}(P${f.p})`).join("、");
@@ -219,11 +245,15 @@ async function fetchBakao(key) {
 
 目標：たんぱく質は基準100g（毎日必達）、運動日は120gを目標にする（120gは上限ではなく、超えても全く問題ない）。糖質の目安は休養日200g前後、運動日280g前後。
 
-対象日（${dateLabel}・${day.dayType === "active" ? "運動日" : "休養日"}）のデータ：
+筋トレ設計：週2（A=ヒンジ・脚／B=引く・押す・体幹）。筋トレ日は目標120gを狙い、トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。翌朝の手首に違和感が出たら一段戻すルール。
+
+対象日（${dateLabel}・${DAY_LABEL[day.dayType] || "休養"}）のデータ：
 - たんぱく質：${total}g（目標${target}g）
 - 糖質：${carbs}g
 - 食後散歩：${day.walked ? "した" : "記録なし"}
 - 緑黄色野菜：${hasVeg ? "あり" : "なし"}／オメガ3の魚：${hasOmega3 ? "あり" : "なし"}
+- 運動：${DAY_LABEL[day.dayType] || "休養"}${MENU[day.dayType] ? `／実施種目：${(((day.workout||{}).checks)||[]).length}/${MENU[day.dayType].length}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}` : ""}
+- 毎日ケア（手首+下半身10分）：${day.care ? "実施" : "記録なし"}${day.wrist ? `／翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}` : ""}
 - 食べたもの：${foodList}
 - 直近7日平均：${weekAvgFor(new Date(y, m - 1, d)) ?? "—"}g
 - 今週の食材ペース：鯖缶${pc.saba}/3、生魚${pc.fish}/1、ツナ${pc.tuna}/2、赤身${pc.red}/1、貝${pc.shell}/1
@@ -266,7 +296,7 @@ function buildCsv() {
     if (!dd || !(dd.foods || []).length) continue;
     const dp = sumP(dd), dc = sumC(dd);
     dd.foods.forEach((f, i) => {
-      rows.push([k, dd.dayType === "active" ? "運動日" : "休養日", q(f.name), f.p ?? 0, f.c ?? 0,
+      rows.push([k, (DAY_LABEL[dd.dayType] || "休養"), q(f.name), f.p ?? 0, f.c ?? 0,
         f.veg ? 1 : 0, f.omega3 ? 1 : 0, f.fiber ? 1 : 0, f.cat || "",
         i === 0 ? dp : "", i === 0 ? dc : "",
         i === 0 ? (dd.sleep ?? "") : "", i === 0 ? (dd.weight ?? "") : "", i === 0 ? (dd.walked ? 1 : 0) : ""].join(","));
@@ -372,13 +402,13 @@ function renderLog() {
   const key = toKey(cursor);
   const day = getDay(key);
   const total = sumP(day), carbs = sumC(day);
-  const target = day.dayType === "active" ? CEILING : FLOOR;
+  const target = isActive(day.dayType) ? CEILING : FLOOR;
   const isToday = toKey(new Date()) === key;
   const hitFloor = total >= FLOOR, hitCeil = total >= CEILING;
   const barColor = hitCeil ? "var(--amber)" : hitFloor ? "var(--green)" : "var(--ice)";
   const pct = Math.min(total / CEILING, 1) * 100;
   const floorPct = (FLOOR / CEILING) * 100;
-  const carbLimit = CARB_LIMIT[day.dayType] || CARB_LIMIT.rest;
+  const carbLimit = CARB_LIMIT[isActive(day.dayType) ? "active" : "rest"];
   const carbHot = carbs >= carbLimit && !day.walked;
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOm = day.foods.some((f) => f.omega3);
@@ -396,10 +426,45 @@ function renderLog() {
       <button class="navbtn" data-move="1" ${isToday ? "disabled" : ""}>›</button>
     </div>
 
-    <div class="daytype">
-      <button class="dt rest ${day.dayType==="rest"?"on":""}" data-daytype="rest">休養日 · 基準100g</button>
-      <button class="dt active ${day.dayType==="active"?"on":""}" data-daytype="active">運動日 · 目標120g</button>
+    <div class="daytype daytype5">
+      ${["rest","trainA","trainB","climb","mountain"].map((t) =>
+        `<button class="dt ${t==="rest"?"rest":"active"} ${day.dayType===t?"on":""}" data-daytype="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
+    <div class="hint" style="margin-top:-8px;margin-bottom:8px">${isActive(day.dayType)?"運動日 · 目標120g":"休養日 · 基準100g"}</div>
+
+    ${MENU[day.dayType] ? `
+    <div class="section" style="padding-top:0;padding-bottom:14px">
+      <div class="seclabel">今日のメニュー（${DAY_LABEL[day.dayType]}）</div>
+      <div class="card pacebox">
+        ${MENU[day.dayType].map((ex) => {
+          const on = ((day.workout && day.workout.checks) || []).includes(ex.id);
+          return `<div class="pacerow" data-ex="${ex.id}" style="cursor:pointer">
+            <span class="box" style="width:18px;height:18px;border-radius:5px;border:1.5px solid var(--green);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;${on?"background:var(--green);color:var(--bg)":""}">${on?"✓":""}</span>
+            <span style="font-size:14px;flex:1;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</span>
+            <span style="font-size:11px;color:var(--muted);flex-shrink:0" class="mono">${ex.spec}</span>
+          </div>`;
+        }).join("")}
+      </div>
+      <input class="setinput" data-wnote placeholder="メモ（例：RDL 18kgに上げた／スイング違和感で中止）"
+        value="${esc((day.workout && day.workout.note) || "")}" style="margin-top:8px;font-size:13px">
+    </div>` : ""}
+
+    ${(() => {
+      const yd = new Date(cursor); yd.setDate(yd.getDate() - 1);
+      const ydd = data[toKey(yd)];
+      if (!ydd || !MENU[ydd.dayType]) return "";
+      return `<div class="section" style="padding-top:0;padding-bottom:14px">
+        <div class="card" style="padding:12px 14px;border-color:${day.wrist==="ng"?"var(--amber)":"var(--line)"}">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">昨日は${DAY_LABEL[ydd.dayType]}。翌朝の手首は？</div>
+          <div style="display:flex;gap:8px">
+            <button class="dt ${day.wrist==="ok"?"rest on":"rest"}" data-wrist="ok" style="padding:8px 0">違和感なし</button>
+            <button class="dt ${day.wrist==="ng"?"active on":"active"}" data-wrist="ng" style="padding:8px 0">違和感あり</button>
+          </div>
+          ${day.wrist==="ng"?`<div style="font-size:11px;color:var(--amber);margin-top:8px">判断基準：一段戻す（重量↓ or テンポ段階↓）。2回続いたら2割減。</div>`:""}
+          ${day.wrist==="ok"?`<div style="font-size:11px;color:var(--green);margin-top:8px">前進OK。テンポ→ポーズ→片側化→回数の順で。</div>`:""}
+        </div>
+      </div>`;
+    })()}
 
     <div class="gaugewrap">
       <div class="gauge">
@@ -410,13 +475,13 @@ function renderLog() {
       <div class="gmain">
         <div class="glabel">たんぱく質</div>
         <div><span class="gnum mono" style="color:${barColor}">${total}</span><span class="gunit mono"> g</span></div>
-        <div class="gtarget">今日の目標 ${target}g</div>
+        <div class="gtarget">今日の目標 ${target}g（${DAY_LABEL[day.dayType]||"休養"}）</div>
         <div class="statusrow">
           <span class="box" style="border-color:var(--green);${hitFloor?"background:var(--green);color:var(--bg)":""}">${hitFloor?"✓":""}</span>
           <span>基準 100g</span>
           <span class="detail mono" style="color:${hitFloor?"var(--green)":"var(--muted)"}">${hitFloor?"到達 · 合格":`あと ${FLOOR-total}g`}</span>
         </div>
-        <div class="statusrow" style="opacity:${day.dayType==="active"?1:.5}">
+        <div class="statusrow" style="opacity:${isActive(day.dayType)?1:.5}">
           <span class="box" style="border-color:var(--amber);${hitCeil?"background:var(--amber);color:var(--bg)":""}">${hitCeil?"✓":""}</span>
           <span>運動日目標 120g</span>
           <span class="detail mono" style="color:${hitCeil?"var(--amber)":"var(--muted)"}">${hitCeil?"到達":`あと ${CEILING-total}g`}</span>
@@ -427,7 +492,7 @@ function renderLog() {
 
     <div class="card carbcard ${carbHot?"hot":""}">
       <div>
-        <div style="font-size:12px;color:var(--muted)">糖質（目安 ${carbLimit}g／${day.dayType==="active"?"運動日":"休養日"}）</div>
+        <div style="font-size:12px;color:var(--muted)">糖質（目安 ${carbLimit}g／${isActive(day.dayType)?"運動日":"休養日"}）</div>
         ${carbHot ? `<div style="font-size:11px;color:var(--amber);margin-top:3px">目安超え。食後の散歩がおすすめ。</div>` : ""}
       </div>
       <div><span class="mono" style="font-size:26px;font-weight:700;color:${carbHot?"var(--amber)":"var(--text)"}">${carbs}</span><span class="mono" style="font-size:13px;color:var(--muted)"> g</span></div>
@@ -500,6 +565,11 @@ function renderLog() {
         <input class="tileinput mono" data-field="weight" inputmode="decimal" placeholder="—" value="${day.weight ?? ""}">
         <span class="tilelabel">体重 kg</span>
       </div>
+      <button class="tile ${day.care?"on":""}" data-care style="cursor:pointer;border:1px solid ${day.care?"var(--green)":"var(--line)"}">
+        <span class="ico">🤲</span>
+        <span class="mono" style="font-size:15px;font-weight:700;color:${day.care?"var(--green)":"var(--muted)"}">${day.care?"✓":"—"}</span>
+        <span class="tilelabel">毎日ケア</span>
+      </button>
       <button class="tile ${day.walked?"on":""}" data-walk style="cursor:pointer;border:1px solid ${day.walked?"var(--green)":"var(--line)"}">
         <span class="ico">👣</span>
         <span class="mono" style="font-size:15px;font-weight:700;color:${day.walked?"var(--green)":"var(--muted)"}">${day.walked?"✓":"—"}</span>
@@ -561,7 +631,7 @@ function renderReview() {
         ${days.slice().reverse().map((x) => `
           <div class="dayrow ${x.has?"":"off"}">
             <span class="daydate mono">${x.label}</span>
-            ${x.dayType==="active"?`<span class="daybadge">運動</span>`:""}
+            ${DAY_SHORT[x.dayType]?`<span class="daybadge">${DAY_SHORT[x.dayType]}</span>`:""}
             <span class="dayicons">${x.veg?"🥬":""}${x.omega3?"🐟":""}${x.fiber?"🌾":""}${x.walked?"👣":""}</span>
             <span class="dayp mono" style="color:${!x.has?"var(--muted)":x.p>=CEILING?"var(--amber)":x.p>=FLOOR?"var(--green)":"var(--ice)"}">${x.has?x.p+"g":"—"}</span>
           </div>`).join("")}
@@ -646,7 +716,7 @@ function renderSettings() {
       <div class="card setbox">
         <div class="settitle">ℹ️ このアプリについて</div>
         <div class="setdesc">
-          foodlog — たんぱく質 基準100g／運動日目標120g方式の食事ログ。<br>
+          foodlog — たんぱく質 基準100g／運動日目標120g方式の食事＋筋トレログ。<br>筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）＋毎日ケア10分。翌朝の手首で前進/一段戻すを判定。<br>
           糖質目安：休養日200g・運動日280g。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週。<br>
           データ保存：この端末のみ（サーバーには何も送りません）。
         </div>
@@ -689,6 +759,32 @@ function bindEvents() {
     const key = toKey(cursor);
     updateDay(key, { walked: !getDay(key).walked });
   });
+  const care = $("[data-care]"); if (care) care.addEventListener("click", () => {
+    const key = toKey(cursor);
+    updateDay(key, { care: !getDay(key).care });
+  });
+  document.querySelectorAll("[data-ex]").forEach((row) =>
+    row.addEventListener("click", () => {
+      const key = toKey(cursor);
+      const day = getDay(key);
+      const w = Object.assign({ checks: [], note: "" }, day.workout || {});
+      const id = row.dataset.ex;
+      w.checks = w.checks.includes(id) ? w.checks.filter((x) => x !== id) : w.checks.concat(id);
+      updateDay(key, { workout: w });
+    }));
+  const wn = $("[data-wnote]"); if (wn) {
+    wn.addEventListener("change", () => {
+      const key = toKey(cursor);
+      const day = getDay(key);
+      updateDay(key, { workout: Object.assign({ checks: [] }, day.workout || {}, { note: wn.value }) });
+    });
+  }
+  document.querySelectorAll("[data-wrist]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const key = toKey(cursor);
+      const cur = getDay(key).wrist;
+      updateDay(key, { wrist: cur === b.dataset.wrist ? null : b.dataset.wrist });
+    }));
 
   document.querySelectorAll("[data-range]").forEach((b) =>
     b.addEventListener("click", () => { range = Number(b.dataset.range); render(); }));
@@ -728,6 +824,19 @@ document.getElementById("importInput").addEventListener("change", (e) => {
   e.target.value = "";
   if (f) importJson(f);
 });
+
+// 追加スタイル（5択トグル・4タイル対応）
+(() => {
+  const st = document.createElement("style");
+  st.textContent = `
+    .daytype5 { flex-wrap: wrap; }
+    .daytype5 .dt { flex: 1 1 30%; padding: 9px 0; font-size: 12.5px; }
+    .tiles { display: grid !important; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .tile { padding: 12px 2px; }
+    .tilelabel { font-size: 10px; }
+  `;
+  document.head.appendChild(st);
+})();
 
 // Service Worker登録（オフライン起動用）
 if ("serviceWorker" in navigator) {
