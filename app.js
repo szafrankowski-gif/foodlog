@@ -257,7 +257,8 @@ async function fetchBakao(key) {
 - 食後散歩：${day.walked ? "した" : "記録なし"}
 - 緑黄色野菜：${hasVeg ? "あり" : "なし"}／オメガ3の魚：${hasOmega3 ? "あり" : "なし"}
 - 運動：${DAY_LABEL[day.dayType] || "休養"}${MENU[day.dayType] ? `／実施種目：${(((day.workout||{}).checks)||[]).length}/${MENU[day.dayType].length}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}` : ""}
-- 毎日ケア（手首+下半身10分）：${day.care ? "実施" : "記録なし"}${day.wrist ? `／翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}` : ""}
+${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${day.weight ?? "—"}kg／骨格筋量${day.muscle ?? "—"}kg／体脂肪率${day.fatpct ?? "—"}%（維持目標。骨格筋量の減少傾向にだけ注意を払う）
+` : ""}- 毎日ケア（手首+下半身10分）：${day.care ? "実施" : "記録なし"}${day.wrist ? `／翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}` : ""}
 - 食べたもの：${foodList}
 - 直近7日平均：${weekAvgFor(new Date(y, m - 1, d)) ?? "—"}g
 - 今週の食材ペース：鯖缶${pc.saba}/3、生魚${pc.fish}/1、ツナ${pc.tuna}/2、赤身${pc.red}/1、貝${pc.shell}/1
@@ -265,6 +266,26 @@ async function fetchBakao(key) {
 出力：日本語で2〜3文の一言評価のみ。前置き・見出し・絵文字・マークダウン不要。`} ],
   });
   return raw.trim();
+}
+
+// InBody等のスクショから体組成を読み取る
+async function extractBodyComp(base64, mediaType) {
+  const raw = await callApi({
+    model: MODEL_PHOTO, max_tokens: 300,
+    messages: [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+      { type: "text", text:
+`この体組成計アプリのスクリーンショットから数値を読み取ってください。
+- weight: 体重(kg)
+- muscle: 骨格筋量(kg)
+- fatpct: 体脂肪率(%)
+読み取れない項目はnull。出力はJSONオブジェクトのみ：{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull}
+前置き・説明・コードフェンス不要。` },
+    ] }],
+  });
+  const o = JSON.parse(raw.replace(/```json|```/g, "").trim());
+  const num = (v) => (v == null || isNaN(Number(v))) ? null : Math.round(Number(v) * 10) / 10;
+  return { weight: num(o.weight), muscle: num(o.muscle), fatpct: num(o.fatpct) };
 }
 
 // 写真を縮小してbase64化（通信量・コスト対策）
@@ -294,7 +315,7 @@ function resizeImage(file) {
 // ---------- CSV / バックアップ ----------
 function buildCsv() {
   const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
-  const rows = [["日付","区分","品名","たんぱく質g","糖質g","緑黄色野菜","オメガ3","食物繊維","食材カテゴリ","日合計P","日合計C","睡眠h","体重kg","食後散歩"].join(",")];
+  const rows = [["日付","区分","品名","たんぱく質g","糖質g","緑黄色野菜","オメガ3","食物繊維","食材カテゴリ","日合計P","日合計C","睡眠h","体重kg","骨格筋量kg","体脂肪率","食後散歩"].join(",")];
   for (const k of Object.keys(data).sort()) {
     const dd = data[k];
     if (!dd || !(dd.foods || []).length) continue;
@@ -303,7 +324,7 @@ function buildCsv() {
       rows.push([k, (DAY_LABEL[dd.dayType] || "休養"), q(f.name), f.p ?? 0, f.c ?? 0,
         f.veg ? 1 : 0, f.omega3 ? 1 : 0, f.fiber ? 1 : 0, f.cat || "",
         i === 0 ? dp : "", i === 0 ? dc : "",
-        i === 0 ? (dd.sleep ?? "") : "", i === 0 ? (dd.weight ?? "") : "", i === 0 ? (dd.walked ? 1 : 0) : ""].join(","));
+        i === 0 ? (dd.sleep ?? "") : "", i === 0 ? (dd.weight ?? "") : "", i === 0 ? (dd.muscle ?? "") : "", i === 0 ? (dd.fatpct ?? "") : "", i === 0 ? (dd.walked ? 1 : 0) : ""].join(","));
     });
   }
   return rows.join("\n");
@@ -381,6 +402,27 @@ async function getBakao() {
     if (c) updateDay(key, { comment: c });
   } catch (e) { errMsg = "評価の取得に失敗しました。"; }
   finally { commentBusy = false; render(); }
+}
+
+async function onInbodyPicked(file) {
+  if (!file || busy) return;
+  if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると読み取りが使えます。"; render(); return; }
+  busy = true; errMsg = ""; render();
+  try {
+    const { base64, mediaType } = await resizeImage(file);
+    const r = await extractBodyComp(base64, mediaType);
+    if (r.weight == null && r.muscle == null && r.fatpct == null) {
+      errMsg = "数値を読み取れませんでした。数値が写った画面で撮り直してみてください。";
+    } else {
+      const key = toKey(cursor);
+      const patch = {};
+      if (r.weight != null) patch.weight = String(r.weight);
+      if (r.muscle != null) patch.muscle = r.muscle;
+      if (r.fatpct != null) patch.fatpct = r.fatpct;
+      updateDay(key, patch);
+    }
+  } catch (e) { errMsg = "読み取りに失敗しました。もう一度試してください。"; }
+  finally { busy = false; render(); }
 }
 
 function removeFood(i) {
@@ -581,6 +623,18 @@ function renderLog() {
       </button>
     </div>
     ${day.walked ? `<div class="walknote">食後の散歩は食後血糖の面でプラス。</div>` : ""}
+
+    <div class="section" style="padding-bottom:8px">
+      <div class="seclabel">体組成（InBody等のスクショから）</div>
+      <div class="card" style="margin-top:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">
+        <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:44px;height:44px">📊</button>
+        <div style="flex:1;font-size:13px;color:var(--muted)">
+          ${(day.muscle != null || day.fatpct != null)
+            ? `<span style="color:var(--text)">筋量 <b class="mono" style="color:var(--green)">${day.muscle ?? "—"}</b>kg ・ 体脂肪 <b class="mono" style="color:var(--ice)">${day.fatpct ?? "—"}</b>%</span>`
+            : "測定結果のスクショを選ぶと、体重・筋量・体脂肪率を自動で記録します。"}
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -595,6 +649,8 @@ function renderReview() {
       p: sumP(dd), c: sumC(dd), has: !!(dd && dd.foods.length),
       dayType: (dd && dd.dayType) || "rest", walked: !!(dd && dd.walked),
       weight: dd && dd.weight ? Number(dd.weight) : null,
+      muscle: dd && dd.muscle != null ? Number(dd.muscle) : null,
+      fatpct: dd && dd.fatpct != null ? Number(dd.fatpct) : null,
       veg: !!((dd && dd.foods) || []).some((f) => f.veg),
       omega3: !!((dd && dd.foods) || []).some((f) => f.omega3),
       fiber: !!((dd && dd.foods) || []).some((f) => f.fiber),
@@ -628,6 +684,14 @@ function renderReview() {
     <div class="chartbox">
       <div class="seclabel">⚖️ 体重の推移</div>
       ${weightChart(days)}
+    </div>
+    <div class="chartbox">
+      <div class="seclabel">💪 骨格筋量の推移</div>
+      ${compChart(days, "muscle", "#7FD68B", "kg")}
+    </div>
+    <div class="chartbox">
+      <div class="seclabel">体脂肪率の推移</div>
+      ${compChart(days, "fatpct", "#F0B458", "%")}
     </div>
     <div class="section" style="padding-top:0">
       <div class="seclabel">日別ログ</div>
@@ -686,6 +750,25 @@ function weightChart(days) {
     `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
     ${axis}<path d="${path}" fill="none" stroke="#5FC9DE" stroke-width="2"/>${dots}${labels}
+  </svg>`;
+}
+
+function compChart(days, field, color, unit) {
+  const pts = days.filter((d) => d[field] != null);
+  if (pts.length < 2) return `<div style="font-size:12px;color:var(--muted);padding:14px 0">記録が2回分たまるとグラフが出ます（${unit}）。</div>`;
+  const W = 448, H = 140, padL = 36, padB = 18, padT = 10;
+  const vs = pts.map((p) => p[field]);
+  const lo = Math.min(...vs) - 0.5, hi = Math.max(...vs) + 0.5;
+  const x = (i) => padL + (W - padL - 8) * (pts.length === 1 ? 0.5 : i / (pts.length - 1));
+  const y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo));
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[field]).toFixed(1)}`).join(" ");
+  const dots = pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p[field]).toFixed(1)}" r="3" fill="${color}"/>`).join("");
+  const labels = pts.map((p, i) => (pts.length <= 8 || i === 0 || i === pts.length - 1)
+    ? `<text x="${x(i).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
+  const axis = [lo, (lo+hi)/2, hi].map((v) =>
+    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
+    ${axis}<path d="${path}" fill="none" stroke="${color}" stroke-width="2"/>${dots}${labels}
   </svg>`;
 }
 
@@ -749,6 +832,7 @@ function bindEvents() {
   }
   const send = $("[data-send]"); if (send) send.addEventListener("click", submitText);
   const photo = $("[data-photo]"); if (photo) photo.addEventListener("click", () => $("#photoInput").click());
+  const ib = $("[data-inbody]"); if (ib) ib.addEventListener("click", () => $("#inbodyInput").click());
 
   document.querySelectorAll("[data-del]").forEach((b) =>
     b.addEventListener("click", () => removeFood(Number(b.dataset.del))));
@@ -823,6 +907,18 @@ document.getElementById("photoInput").addEventListener("change", (e) => {
   e.target.value = "";
   onPhotoPicked(f);
 });
+// InBodyスクショ用の隠しinputを動的に用意（index.html変更を不要にするため）
+(() => {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "image/*"; inp.id = "inbodyInput"; inp.style.display = "none";
+  document.body.appendChild(inp);
+  inp.addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    onInbodyPicked(f);
+  });
+})();
+
 document.getElementById("importInput").addEventListener("change", (e) => {
   const f = e.target.files && e.target.files[0];
   e.target.value = "";
