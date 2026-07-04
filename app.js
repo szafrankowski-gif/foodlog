@@ -333,7 +333,7 @@ function importJson(file) {
 async function submitText() {
   const t = inputText.trim();
   if (!t || busy) return;
-  if (!apiKey()) { view = "settings"; setMsg = ""; render(); return; }
+  if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると送信できます。"; render(); return; }
   busy = true; errMsg = ""; render();
   try {
     const items = await estimateNutrition(t);
@@ -351,7 +351,7 @@ async function submitText() {
 
 async function onPhotoPicked(file) {
   if (!file || busy) return;
-  if (!apiKey()) { view = "settings"; render(); return; }
+  if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると写真解析が使えます。"; render(); return; }
   busy = true; errMsg = ""; render();
   try {
     const { base64, mediaType } = await resizeImage(file);
@@ -370,7 +370,7 @@ async function onPhotoPicked(file) {
 async function getBakao() {
   const key = toKey(cursor);
   if (commentBusy || !getDay(key).foods.length) return;
-  if (!apiKey()) { view = "settings"; render(); return; }
+  if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると評価が使えます。"; render(); return; }
   commentBusy = true; errMsg = ""; render();
   try {
     const c = await fetchBakao(key);
@@ -695,6 +695,7 @@ function renderSettings() {
           写真解析・自動概算・ばかおの一言に使います。キーは<b>この端末の中にだけ</b>保存され、外部には送信されません（Anthropicへの通信を除く）。<br>
           取得：console.anthropic.com → API Keys → Create Key。従量課金ですが1回の概算は1円未満〜数円程度です。
         </div>
+        <div style="font-size:12px;margin-bottom:8px;color:${hasKey?"var(--green)":"var(--amber)"}">現在：${hasKey ? "登録済み ✓" : "未登録（AI概算・写真解析・ばかお評価は使えません）"}</div>
         <input class="setinput mono" id="apikeyInput" type="password" placeholder="sk-ant-..." value="${hasKey ? "●●●●●●●●●●●●" : ""}">
         <div class="setrow">
           <button class="setbtn" data-savekey>保存してテスト</button>
@@ -799,8 +800,7 @@ function bindEvents() {
       await callApi({ model: MODEL, max_tokens: 10, messages: [{ role: "user", content: "1+1=" }] });
       setMsg = "保存しました。AI機能が使えます。";
     } catch (e) {
-      localStorage.removeItem(API_KEY_KEY);
-      setMsg = "キーが無効のようです：" + e.message;
+      setMsg = "保存しましたが、テストに失敗しました（" + e.message + "）。通信状況か、キーが正しいか確認してください。";
     }
     render();
   });
