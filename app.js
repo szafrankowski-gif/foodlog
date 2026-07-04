@@ -5,7 +5,11 @@ const FLOOR = 100, CEILING = 120;
 const CARB_LIMIT = { rest: 200, active: 280 };
 const DATA_KEY = "mealog:data";
 const API_KEY_KEY = "mealog:apikey";
-const MODEL = "claude-sonnet-4-6";
+// 用途別モデル（コストと質のバランス。変えたい時はここを編集）
+const MODEL_ESTIMATE = "claude-haiku-4-5-20251001"; // テキスト概算：軽量・高速・低コスト
+const MODEL_PHOTO    = "claude-sonnet-4-6";          // 写真解析：認識精度重視
+const MODEL_BAKAO    = "claude-sonnet-4-6";          // ばかお評価：文章の質重視
+const MODEL_TEST     = MODEL_ESTIMATE;               // キー保存時のテスト用（最安）
 
 const DAY_LABEL = { rest: "休養", trainA: "筋トレA", trainB: "筋トレB", climb: "登攀・柔術", mountain: "山行" };
 const DAY_SHORT = { trainA: "筋A", trainB: "筋B", climb: "登", mountain: "山" };
@@ -184,7 +188,7 @@ function parseItems(raw) {
 
 async function estimateNutrition(text) {
   const raw = await callApi({
-    model: MODEL, max_tokens: 1200,
+    model: MODEL_ESTIMATE, max_tokens: 1200,
     messages: [{ role: "user", content:
 `あなたは栄養士です。次の食事メモから品目ごとに推定してください。
 分量の記載(例「玄米150g」「卵2個」)は分量として解釈。分量指定がなければ一般的な1食分で推定。
@@ -202,7 +206,7 @@ async function estimateFromPhoto(base64, mediaType, hint) {
 `あなたは栄養士です。この食事写真に写っている品目を特定し、それぞれの栄養を推定してください。
 ${hint ? "補足メモ：" + hint + "\n" : ""}${NUTRITION_RULES}` },
   ];
-  const raw = await callApi({ model: MODEL, max_tokens: 1200, messages: [{ role: "user", content }] });
+  const raw = await callApi({ model: MODEL_PHOTO, max_tokens: 1200, messages: [{ role: "user", content }] });
   return parseItems(raw);
 }
 
@@ -230,7 +234,7 @@ async function fetchBakao(key) {
   }[phase];
   const pc = pace7(key);
   const raw = await callApi({
-    model: MODEL, max_tokens: 500,
+    model: MODEL_BAKAO, max_tokens: 500,
     messages: [{ role: "user", content:
 `あなたは「塔ノ岳 ばかお」という栄養担当のコーチです。48歳男性クライマー・登山者（170cm/61kg、維持目標、TFCC損傷回復期、血糖やや高め・HbA1c5.9、起床9:30・就寝2:30の夜型）の食事ログに、一言評価を返します。
 
@@ -797,7 +801,7 @@ function bindEvents() {
     localStorage.setItem(API_KEY_KEY, v);
     setMsg = "テスト中…"; render();
     try {
-      await callApi({ model: MODEL, max_tokens: 10, messages: [{ role: "user", content: "1+1=" }] });
+      await callApi({ model: MODEL_TEST, max_tokens: 10, messages: [{ role: "user", content: "1+1=" }] });
       setMsg = "保存しました。AI機能が使えます。";
     } catch (e) {
       setMsg = "保存しましたが、テストに失敗しました（" + e.message + "）。通信状況か、キーが正しいか確認してください。";
