@@ -1,4 +1,4 @@
-/* foodlog — 食事ログPWA */
+/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示） */
 "use strict";
 
 const FLOOR = 100, CEILING = 120;
@@ -13,7 +13,20 @@ const MODEL_TEST     = MODEL_ESTIMATE;               // キー保存時のテス
 
 const DAY_LABEL = { rest: "休養", trainA: "筋トレA", trainB: "筋トレB", climb: "登攀・柔術", mountain: "山行" };
 const DAY_SHORT = { trainA: "筋A", trainB: "筋B", climb: "登", mountain: "山" };
-const isActive = (t) => !!t && t !== "rest";
+
+// ---- v2: 実績ベース判定 ----
+// dayTypeの「宣言」を廃止。その日の実績（筋トレチェック・登攀・山行）から運動日/休養日を自動判定する。
+// 筋トレ(A/B)は「1種目以上チェック」で初めて実績＝運動日。登攀・山行はトグル自体が実績。
+// 歩数は参考表示のみ（目標や警告に使わない）。休養日で15,000歩超の日だけ一行提案を出す（目標値は変えない）。
+const ACTS = ["trainA", "trainB", "climb", "mountain"];
+const STEP_NOTE_MIN = 15000;
+const dayActs = (dd) => (dd && dd.acts) || [];
+const checkedCount = (dd) => ((((dd || {}).workout) || {}).checks || []).length;
+const isActiveDay = (dd) =>
+  dayActs(dd).some((a) => a === "climb" || a === "mountain") ||
+  (dayActs(dd).some((a) => a === "trainA" || a === "trainB") && checkedCount(dd) > 0);
+const actLabel = (dd) => dayActs(dd).length ? dayActs(dd).map((a) => DAY_LABEL[a]).join("+") : "休養";
+const actShort = (dd) => dayActs(dd).map((a) => DAY_SHORT[a] || "").join("");
 
 const MENU = {
   trainA: [
@@ -100,7 +113,7 @@ const $ = (sel) => document.querySelector(sel);
 const pad = (n) => String(n).padStart(2, "0");
 const toKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const fmtJP = (d) => `${d.getMonth() + 1}/${d.getDate()}（${"日月火水木金土"[d.getDay()]}）`;
-const emptyDay = () => ({ foods: [], dayType: "rest", sleep: null, walked: false, weight: null, comment: null });
+const emptyDay = () => ({ foods: [], acts: [], sleep: null, walked: false, weight: null, comment: null });
 const sumP = (dd) => (dd && dd.foods || []).reduce((s, f) => s + (Number(f.p) || 0), 0);
 const sumC = (dd) => (dd && dd.foods || []).reduce((s, f) => s + (Number(f.c) || 0), 0);
 const getDay = (k) => data[k] || emptyDay();
@@ -110,8 +123,14 @@ function load() {
   let stored = null;
   try { const raw = localStorage.getItem(DATA_KEY); if (raw) stored = JSON.parse(raw); } catch (e) {}
   data = Object.assign({}, SEED, stored || {});
+  // v2移行：旧dayType宣言 → acts実績配列（旧データは宣言を実績として引き継ぐ）
   for (const k of Object.keys(data)) {
-    if (data[k] && data[k].dayType === "active") data[k].dayType = "climb";
+    const dd = data[k];
+    if (!dd) continue;
+    if (dd.dayType === "active") dd.dayType = "climb";
+    if (!Array.isArray(dd.acts)) {
+      dd.acts = (dd.dayType && dd.dayType !== "rest") ? [dd.dayType] : [];
+    }
   }
   save();
 }
@@ -213,7 +232,8 @@ ${hint ? "補足メモ：" + hint + "\n" : ""}${NUTRITION_RULES}` },
 async function fetchBakao(key) {
   const day = getDay(key);
   const total = sumP(day), carbs = sumC(day);
-  const target = isActive(day.dayType) ? CEILING : FLOOR;
+  const active = isActiveDay(day);
+  const target = active ? CEILING : FLOOR;
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOmega3 = day.foods.some((f) => f.omega3);
   const foodList = day.foods.map((f) => `${f.name}(P${f.p})`).join("、");
@@ -251,13 +271,16 @@ async function fetchBakao(key) {
 
 筋トレ設計：週2（A=ヒンジ・脚／B=引く・押す・体幹）。筋トレ日は目標120gを狙い、トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。翌朝の手首に違和感が出たら一段戻すルール。
 
-対象日（${dateLabel}・${DAY_LABEL[day.dayType] || "休養"}）のデータ：
+運動日/休養日の判定は「実績ベース」：その日に筋トレのチェック・登攀・山行の実績があれば運動日。宣言でなく実績で決まる。
+
+対象日（${dateLabel}・${actLabel(day)}${active ? "＝運動日" : "＝休養日"}）のデータ：
 - たんぱく質：${total}g（目標${target}g）
 - 糖質：${carbs}g
+- 歩数：${day.steps != null ? day.steps.toLocaleString() + "歩（参考値。目標や警告には使わない。ただし休養日で15,000歩を超えている日は、糖質+40〜50g程度の追加補給に軽く触れてよい。責めない・警告調にしない）" : "記録なし"}
 - 食後散歩：${day.walked ? "した" : "記録なし"}
 - 睡眠：${day.sleep != null ? day.sleep + "時間（目標7時間）" : "記録なし"}${(day.bedtime || day.waketime) ? `／就寝${day.bedtime ?? "—"}・起床${day.waketime ?? "—"}（目標2:30就寝・9:30起床。ズレはセットで崩れるので就寝側を主因として見る）` : ""}${day.rhr != null ? `／安静時心拍${day.rhr}bpm（平常より明らかに高い朝は回復不足のサイン）` : ""}${day.mood ? `／本人の体調メモ：「${day.mood}」（数字と体感の対応を一言で拾う）` : ""}
 - 緑黄色野菜：${hasVeg ? "あり" : "なし"}／オメガ3の魚：${hasOmega3 ? "あり" : "なし"}
-- 運動：${DAY_LABEL[day.dayType] || "休養"}${MENU[day.dayType] ? `／実施種目：${(((day.workout||{}).checks)||[]).length}/${MENU[day.dayType].length}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}` : ""}
+- 運動実績：${actLabel(day)}${dayActs(day).filter((a)=>MENU[a]).map((a)=>`／${DAY_LABEL[a]}種目：${(((day.workout||{}).checks)||[]).filter((id)=>MENU[a].some((ex)=>ex.id===id)).length}/${MENU[a].length}`).join("")}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}
 ${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${day.weight ?? "—"}kg／骨格筋量${day.muscle ?? "—"}kg／体脂肪率${day.fatpct ?? "—"}%（維持目標。骨格筋量の減少傾向にだけ注意を払う）
 ` : ""}- 毎日ケア（手首+下半身10分）：${day.care ? "実施" : "記録なし"}${day.wrist ? `／翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}` : ""}
 - 食べたもの：${foodList}
@@ -284,8 +307,9 @@ async function extractHealthData(base64, mediaType) {
 - bedtime: 就寝時刻（"HH:MM"の24時間表記。例：4時48分就寝→"4:48"）
 - waketime: 起床時刻（"HH:MM"の24時間表記。例：11時31分→"11:31"）
 - rhr: 安静時心拍(bpm)
+- steps: 歩数（整数。「20,321歩」→20321）
 写っていない・読み取れない項目はnull。睡眠スコアは不要。出力はJSONオブジェクトのみ：
-{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull}
+{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull,"steps":数値orNull}
 前置き・説明・コードフェンス不要。` },
     ] }],
   });
@@ -294,7 +318,8 @@ async function extractHealthData(base64, mediaType) {
   const tm = (v) => (typeof v === "string" && /^\d{1,2}:\d{2}$/.test(v.trim())) ? v.trim() : null;
   return { weight: num(o.weight), muscle: num(o.muscle), fatpct: num(o.fatpct),
            sleep: num(o.sleep), bedtime: tm(o.bedtime), waketime: tm(o.waketime),
-           rhr: o.rhr != null && !isNaN(Number(o.rhr)) ? Math.round(Number(o.rhr)) : null };
+           rhr: o.rhr != null && !isNaN(Number(o.rhr)) ? Math.round(Number(o.rhr)) : null,
+           steps: o.steps != null && !isNaN(Number(o.steps)) ? Math.round(Number(o.steps)) : null };
 }
 
 // 写真を縮小してbase64化（通信量・コスト対策）
@@ -324,16 +349,16 @@ function resizeImage(file) {
 // ---------- CSV / バックアップ ----------
 function buildCsv() {
   const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
-  const rows = [["日付","区分","品名","たんぱく質g","糖質g","緑黄色野菜","オメガ3","食物繊維","食材カテゴリ","日合計P","日合計C","睡眠h","就寝","起床","安静時心拍","体調","体重kg","骨格筋量kg","体脂肪率","食後散歩"].join(",")];
+  const rows = [["日付","区分","品名","たんぱく質g","糖質g","緑黄色野菜","オメガ3","食物繊維","食材カテゴリ","日合計P","日合計C","睡眠h","就寝","起床","安静時心拍","歩数","体調","体重kg","骨格筋量kg","体脂肪率","食後散歩"].join(",")];
   for (const k of Object.keys(data).sort()) {
     const dd = data[k];
     if (!dd || !(dd.foods || []).length) continue;
     const dp = sumP(dd), dc = sumC(dd);
     dd.foods.forEach((f, i) => {
-      rows.push([k, (DAY_LABEL[dd.dayType] || "休養"), q(f.name), f.p ?? 0, f.c ?? 0,
+      rows.push([k, q(actLabel(dd)), q(f.name), f.p ?? 0, f.c ?? 0,
         f.veg ? 1 : 0, f.omega3 ? 1 : 0, f.fiber ? 1 : 0, f.cat || "",
         i === 0 ? dp : "", i === 0 ? dc : "",
-        i === 0 ? (dd.sleep ?? "") : "", i === 0 ? (dd.bedtime ?? "") : "", i === 0 ? (dd.waketime ?? "") : "", i === 0 ? (dd.rhr ?? "") : "", i === 0 ? q(dd.mood ?? "") : '""', i === 0 ? (dd.weight ?? "") : "", i === 0 ? (dd.muscle ?? "") : "", i === 0 ? (dd.fatpct ?? "") : "", i === 0 ? (dd.walked ? 1 : 0) : ""].join(","));
+        i === 0 ? (dd.sleep ?? "") : "", i === 0 ? (dd.bedtime ?? "") : "", i === 0 ? (dd.waketime ?? "") : "", i === 0 ? (dd.rhr ?? "") : "", i === 0 ? (dd.steps ?? "") : "", i === 0 ? q(dd.mood ?? "") : '""', i === 0 ? (dd.weight ?? "") : "", i === 0 ? (dd.muscle ?? "") : "", i === 0 ? (dd.fatpct ?? "") : "", i === 0 ? (dd.walked ? 1 : 0) : ""].join(","));
     });
   }
   return rows.join("\n");
@@ -420,7 +445,7 @@ async function onInbodyPicked(file) {
   try {
     const { base64, mediaType } = await resizeImage(file);
     const r = await extractHealthData(base64, mediaType);
-    if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null) {
+    if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null && r.steps == null) {
       errMsg = "数値を読み取れませんでした。数値が写った画面で撮り直してみてください。";
     } else {
       const key = toKey(cursor);
@@ -432,6 +457,7 @@ async function onInbodyPicked(file) {
       if (r.bedtime != null) patch.bedtime = r.bedtime;
       if (r.waketime != null) patch.waketime = r.waketime;
       if (r.rhr != null) patch.rhr = r.rhr;
+      if (r.steps != null) patch.steps = r.steps;
       updateDay(key, patch);
     }
   } catch (e) { errMsg = "読み取りに失敗しました。もう一度試してください。"; }
@@ -461,13 +487,14 @@ function renderLog() {
   const key = toKey(cursor);
   const day = getDay(key);
   const total = sumP(day), carbs = sumC(day);
-  const target = isActive(day.dayType) ? CEILING : FLOOR;
+  const active = isActiveDay(day);
+  const target = active ? CEILING : FLOOR;
   const isToday = toKey(new Date()) === key;
   const hitFloor = total >= FLOOR, hitCeil = total >= CEILING;
   const barColor = hitCeil ? "var(--amber)" : hitFloor ? "var(--green)" : "var(--ice)";
   const pct = Math.min(total / CEILING, 1) * 100;
   const floorPct = (FLOOR / CEILING) * 100;
-  const carbLimit = CARB_LIMIT[isActive(day.dayType) ? "active" : "rest"];
+  const carbLimit = CARB_LIMIT[active ? "active" : "rest"];
   const carbHot = carbs >= carbLimit && !day.walked;
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOm = day.foods.some((f) => f.omega3);
@@ -486,16 +513,16 @@ function renderLog() {
     </div>
 
     <div class="daytype daytype5">
-      ${["rest","trainA","trainB","climb","mountain"].map((t) =>
-        `<button class="dt ${t==="rest"?"rest":"active"} ${day.dayType===t?"on":""}" data-daytype="${t}">${DAY_LABEL[t]}</button>`).join("")}
+      ${ACTS.map((t) =>
+        `<button class="dt active ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
-    <div class="hint" style="margin-top:-8px;margin-bottom:8px">${isActive(day.dayType)?"運動日 · 目標120g":"休養日 · 基準100g"}</div>
+    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日 · 目標120g／糖質330g":"休養日 · 基準100g／糖質250g"}</b>${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日になります）" : ""}</div>
 
-    ${MENU[day.dayType] ? `
+    ${dayActs(day).filter((a) => MENU[a]).map((a) => `
     <div class="section" style="padding-top:0;padding-bottom:14px">
-      <div class="seclabel">今日のメニュー（${DAY_LABEL[day.dayType]}）</div>
+      <div class="seclabel">今日のメニュー（${DAY_LABEL[a]}）</div>
       <div class="card pacebox">
-        ${MENU[day.dayType].map((ex) => {
+        ${MENU[a].map((ex) => {
           const on = ((day.workout && day.workout.checks) || []).includes(ex.id);
           return `<div class="pacerow" data-ex="${ex.id}" style="cursor:pointer">
             <span class="box" style="width:18px;height:18px;border-radius:5px;border:1.5px solid var(--green);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;${on?"background:var(--green);color:var(--bg)":""}">${on?"✓":""}</span>
@@ -504,17 +531,20 @@ function renderLog() {
           </div>`;
         }).join("")}
       </div>
+    </div>`).join("")}
+    ${dayActs(day).some((a) => MENU[a]) ? `
+    <div class="section" style="padding-top:0;padding-bottom:14px;margin-top:-8px">
       <input class="setinput" data-wnote placeholder="メモ（例：RDL 18kgに上げた／スイング違和感で中止）"
-        value="${esc((day.workout && day.workout.note) || "")}" style="margin-top:8px;font-size:13px">
+        value="${esc((day.workout && day.workout.note) || "")}" style="font-size:13px">
     </div>` : ""}
 
     ${(() => {
       const yd = new Date(cursor); yd.setDate(yd.getDate() - 1);
       const ydd = data[toKey(yd)];
-      if (!ydd || !MENU[ydd.dayType]) return "";
+      if (!ydd || !dayActs(ydd).some((a) => MENU[a])) return "";
       return `<div class="section" style="padding-top:0;padding-bottom:14px">
         <div class="card" style="padding:12px 14px;border-color:${day.wrist==="ng"?"var(--amber)":"var(--line)"}">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">昨日は${DAY_LABEL[ydd.dayType]}。翌朝の手首は？</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">昨日は${actLabel(ydd)}。翌朝の手首は？</div>
           <div style="display:flex;gap:8px">
             <button class="dt ${day.wrist==="ok"?"rest on":"rest"}" data-wrist="ok" style="padding:8px 0">違和感なし</button>
             <button class="dt ${day.wrist==="ng"?"active on":"active"}" data-wrist="ng" style="padding:8px 0">違和感あり</button>
@@ -534,13 +564,13 @@ function renderLog() {
       <div class="gmain">
         <div class="glabel">たんぱく質</div>
         <div><span class="gnum mono" style="color:${barColor}">${total}</span><span class="gunit mono"> g</span></div>
-        <div class="gtarget">今日の目標 ${target}g（${DAY_LABEL[day.dayType]||"休養"}）</div>
+        <div class="gtarget">今日の目標 ${target}g（${actLabel(day)}）</div>
         <div class="statusrow">
           <span class="box" style="border-color:var(--green);${hitFloor?"background:var(--green);color:var(--bg)":""}">${hitFloor?"✓":""}</span>
           <span>基準 100g</span>
           <span class="detail mono" style="color:${hitFloor?"var(--green)":"var(--muted)"}">${hitFloor?"到達 · 合格":`あと ${FLOOR-total}g`}</span>
         </div>
-        <div class="statusrow" style="opacity:${isActive(day.dayType)?1:.5}">
+        <div class="statusrow" style="opacity:${active?1:.5}">
           <span class="box" style="border-color:var(--amber);${hitCeil?"background:var(--amber);color:var(--bg)":""}">${hitCeil?"✓":""}</span>
           <span>運動日目標 120g</span>
           <span class="detail mono" style="color:${hitCeil?"var(--amber)":"var(--muted)"}">${hitCeil?"到達":`あと ${CEILING-total}g`}</span>
@@ -551,11 +581,13 @@ function renderLog() {
 
     <div class="card carbcard ${carbHot?"hot":""}">
       <div>
-        <div style="font-size:12px;color:var(--muted)">糖質（目安 ${carbLimit}g／${isActive(day.dayType)?"運動日":"休養日"}）</div>
+        <div style="font-size:12px;color:var(--muted)">糖質（目安 ${carbLimit}g／${active?"運動日":"休養日"}）</div>
         ${carbHot ? `<div style="font-size:11px;color:var(--amber);margin-top:3px">目安超え。食後の散歩がおすすめ。</div>` : ""}
       </div>
       <div><span class="mono" style="font-size:26px;font-weight:700;color:${carbHot?"var(--amber)":"var(--text)"}">${carbs}</span><span class="mono" style="font-size:13px;color:var(--muted)"> g</span></div>
     </div>
+    ${(day.steps != null && day.steps >= STEP_NOTE_MIN && !active) ? `
+    <div class="walknote">👣 歩数 ${day.steps.toLocaleString()}歩（参考）。休養日ですが活動量が多い日です。糖質＋40〜50gを目安に補給してOK（目標値は変わりません）。</div>` : ""}
 
     <div class="pills">
       <div class="pill ${hasVeg?"on":""}"><span class="ico">🥬</span>緑黄色野菜</div>
@@ -642,9 +674,9 @@ function renderLog() {
       <div class="card" style="margin-top:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">
         <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:44px;height:44px">📊</button>
         <div style="flex:1;font-size:13px;color:var(--muted)">
-          ${(day.muscle != null || day.fatpct != null || day.bedtime || day.waketime || day.rhr != null)
-            ? `<span style="color:var(--text)">${day.muscle != null ? `筋量 <b class="mono" style="color:var(--green)">${day.muscle}</b>kg` : ""}${day.fatpct != null ? ` ・体脂肪 <b class="mono" style="color:var(--ice)">${day.fatpct}</b>%` : ""}${(day.bedtime || day.waketime) ? `<br>睡眠 <b class="mono" style="color:var(--violet)">${day.bedtime ?? "—"}〜${day.waketime ?? "—"}</b>（目標2:30〜9:30）` : ""}${day.rhr != null ? ` ・安静時心拍 <b class="mono" style="color:var(--ice)">${day.rhr}</b>bpm` : ""}</span>`
-            : "体組成計や睡眠トラッカーのスクショから、体重・筋量・体脂肪・睡眠・就寝起床・心拍を自動記録します。"}
+          ${(day.muscle != null || day.fatpct != null || day.bedtime || day.waketime || day.rhr != null || day.steps != null)
+            ? `<span style="color:var(--text)">${day.muscle != null ? `筋量 <b class="mono" style="color:var(--green)">${day.muscle}</b>kg` : ""}${day.fatpct != null ? ` ・体脂肪 <b class="mono" style="color:var(--ice)">${day.fatpct}</b>%` : ""}${(day.bedtime || day.waketime) ? `<br>睡眠 <b class="mono" style="color:var(--violet)">${day.bedtime ?? "—"}〜${day.waketime ?? "—"}</b>（目標2:30〜9:30）` : ""}${day.rhr != null ? ` ・安静時心拍 <b class="mono" style="color:var(--ice)">${day.rhr}</b>bpm` : ""}${day.steps != null ? `<br>歩数 <b class="mono" style="color:var(--text)">${day.steps.toLocaleString()}</b>歩<span style="color:var(--muted)">（参考表示）</span>` : ""}</span>`
+            : "体組成計や睡眠トラッカーのスクショから、体重・筋量・体脂肪・睡眠・就寝起床・心拍・歩数を自動記録します。"}
         </div>
       </div>
       <input class="setinput" data-mood placeholder="体調ひとこと（任意。例：すっきり／だるい）"
@@ -662,7 +694,9 @@ function renderReview() {
     days.push({
       key: k, label: `${d.getMonth()+1}/${d.getDate()}`,
       p: sumP(dd), c: sumC(dd), has: !!(dd && dd.foods.length),
-      dayType: (dd && dd.dayType) || "rest", walked: !!(dd && dd.walked),
+      badge: actShort(dd), active: isActiveDay(dd),
+      steps: dd && dd.steps != null ? dd.steps : null,
+      walked: !!(dd && dd.walked),
       weight: dd && dd.weight ? Number(dd.weight) : null,
       muscle: dd && dd.muscle != null ? Number(dd.muscle) : null,
       fatpct: dd && dd.fatpct != null ? Number(dd.fatpct) : null,
@@ -714,8 +748,8 @@ function renderReview() {
         ${days.slice().reverse().map((x) => `
           <div class="dayrow ${x.has?"":"off"}">
             <span class="daydate mono">${x.label}</span>
-            ${DAY_SHORT[x.dayType]?`<span class="daybadge">${DAY_SHORT[x.dayType]}</span>`:""}
-            <span class="dayicons">${x.veg?"🥬":""}${x.omega3?"🐟":""}${x.fiber?"🌾":""}${x.walked?"👣":""}</span>
+            ${x.badge?`<span class="daybadge">${x.badge}</span>`:""}
+            <span class="dayicons">${x.veg?"🥬":""}${x.omega3?"🐟":""}${x.fiber?"🌾":""}${x.walked?"👣":""}${x.steps!=null?`<span class="mono" style="font-size:10px;color:var(--muted)"> ${(x.steps/1000).toFixed(1)}k歩</span>`:""}</span>
             <span class="dayp mono" style="color:${!x.has?"var(--muted)":x.p>=CEILING?"var(--amber)":x.p>=FLOOR?"var(--green)":"var(--ice)"}">${x.has?x.p+"g":"—"}</span>
           </div>`).join("")}
       </div>
@@ -819,7 +853,10 @@ function renderSettings() {
       <div class="card setbox">
         <div class="settitle">ℹ️ このアプリについて</div>
         <div class="setdesc">
-          foodlog — たんぱく質 基準100g／運動日目標120g方式の食事＋筋トレログ。<br>筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）＋毎日ケア10分。翌朝の手首で前進/一段戻すを判定。<br>
+          foodlog v2 — たんぱく質 基準100g／運動日目標120g方式の食事＋筋トレログ。<br>
+          <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・山行）から自動判定。<br>
+          歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
+          筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）＋毎日ケア10分。翌朝の手首で前進/一段戻すを判定。<br>
           糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週。<br>
           データ保存：この端末のみ（サーバーには何も送りません）。
         </div>
@@ -837,8 +874,15 @@ function bindEvents() {
     b.addEventListener("click", () => { const d = new Date(cursor); d.setDate(d.getDate() + Number(b.dataset.move)); cursor = d; errMsg = ""; render(); }));
   const tb = $("[data-today]"); if (tb) tb.addEventListener("click", () => { cursor = new Date(); render(); });
 
-  document.querySelectorAll("[data-daytype]").forEach((b) =>
-    b.addEventListener("click", () => updateDay(toKey(cursor), { dayType: b.dataset.daytype })));
+  document.querySelectorAll("[data-act]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const key = toKey(cursor);
+      const day = getDay(key);
+      const a = b.dataset.act;
+      const cur = dayActs(day);
+      const acts = cur.includes(a) ? cur.filter((x) => x !== a) : cur.concat(a);
+      updateDay(key, { acts, comment: null });
+    }));
 
   const ta = $(".mealinput");
   if (ta) {
@@ -950,7 +994,7 @@ document.getElementById("importInput").addEventListener("change", (e) => {
   const st = document.createElement("style");
   st.textContent = `
     .daytype5 { flex-wrap: wrap; }
-    .daytype5 .dt { flex: 1 1 30%; padding: 9px 0; font-size: 12.5px; }
+    .daytype5 .dt { flex: 1 1 22%; padding: 9px 0; font-size: 12px; }
     .tiles { display: grid !important; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     .tile { padding: 12px 2px; }
     .tilelabel { font-size: 10px; }
