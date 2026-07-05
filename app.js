@@ -255,6 +255,7 @@ async function fetchBakao(key) {
 - たんぱく質：${total}g（目標${target}g）
 - 糖質：${carbs}g
 - 食後散歩：${day.walked ? "した" : "記録なし"}
+- 睡眠：${day.sleep != null ? day.sleep + "時間（目標7時間）" : "記録なし"}${(day.bedtime || day.waketime) ? `／就寝${day.bedtime ?? "—"}・起床${day.waketime ?? "—"}（目標2:30就寝・9:30起床。ズレはセットで崩れるので就寝側を主因として見る）` : ""}${day.rhr != null ? `／安静時心拍${day.rhr}bpm（平常より明らかに高い朝は回復不足のサイン）` : ""}${day.mood ? `／本人の体調メモ：「${day.mood}」（数字と体感の対応を一言で拾う）` : ""}
 - 緑黄色野菜：${hasVeg ? "あり" : "なし"}／オメガ3の魚：${hasOmega3 ? "あり" : "なし"}
 - 運動：${DAY_LABEL[day.dayType] || "休養"}${MENU[day.dayType] ? `／実施種目：${(((day.workout||{}).checks)||[]).length}/${MENU[day.dayType].length}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}` : ""}
 ${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${day.weight ?? "—"}kg／骨格筋量${day.muscle ?? "—"}kg／体脂肪率${day.fatpct ?? "—"}%（維持目標。骨格筋量の減少傾向にだけ注意を払う）
@@ -268,24 +269,32 @@ ${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${day.weight
   return raw.trim();
 }
 
-// InBody等のスクショから体組成を読み取る
-async function extractBodyComp(base64, mediaType) {
+// InBody・Fitbit等のスクショから測定データを読み取る（体組成・睡眠）
+async function extractHealthData(base64, mediaType) {
   const raw = await callApi({
-    model: MODEL_PHOTO, max_tokens: 300,
+    model: MODEL_PHOTO, max_tokens: 400,
     messages: [{ role: "user", content: [
       { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
       { type: "text", text:
-`この体組成計アプリのスクリーンショットから数値を読み取ってください。
+`この健康系アプリ（体組成計・睡眠トラッカー等）のスクリーンショットから、写っている数値だけを読み取ってください。
 - weight: 体重(kg)
 - muscle: 骨格筋量(kg)
 - fatpct: 体脂肪率(%)
-読み取れない項目はnull。出力はJSONオブジェクトのみ：{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull}
+- sleep: 睡眠時間（小数の時間。例：6時間37分→6.6）
+- bedtime: 就寝時刻（"HH:MM"の24時間表記。例：4時48分就寝→"4:48"）
+- waketime: 起床時刻（"HH:MM"の24時間表記。例：11時31分→"11:31"）
+- rhr: 安静時心拍(bpm)
+写っていない・読み取れない項目はnull。睡眠スコアは不要。出力はJSONオブジェクトのみ：
+{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull}
 前置き・説明・コードフェンス不要。` },
     ] }],
   });
   const o = JSON.parse(raw.replace(/```json|```/g, "").trim());
   const num = (v) => (v == null || isNaN(Number(v))) ? null : Math.round(Number(v) * 10) / 10;
-  return { weight: num(o.weight), muscle: num(o.muscle), fatpct: num(o.fatpct) };
+  const tm = (v) => (typeof v === "string" && /^\d{1,2}:\d{2}$/.test(v.trim())) ? v.trim() : null;
+  return { weight: num(o.weight), muscle: num(o.muscle), fatpct: num(o.fatpct),
+           sleep: num(o.sleep), bedtime: tm(o.bedtime), waketime: tm(o.waketime),
+           rhr: o.rhr != null && !isNaN(Number(o.rhr)) ? Math.round(Number(o.rhr)) : null };
 }
 
 // 写真を縮小してbase64化（通信量・コスト対策）
@@ -315,7 +324,7 @@ function resizeImage(file) {
 // ---------- CSV / バックアップ ----------
 function buildCsv() {
   const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
-  const rows = [["日付","区分","品名","たんぱく質g","糖質g","緑黄色野菜","オメガ3","食物繊維","食材カテゴリ","日合計P","日合計C","睡眠h","体重kg","骨格筋量kg","体脂肪率","食後散歩"].join(",")];
+  const rows = [["日付","区分","品名","たんぱく質g","糖質g","緑黄色野菜","オメガ3","食物繊維","食材カテゴリ","日合計P","日合計C","睡眠h","就寝","起床","安静時心拍","体調","体重kg","骨格筋量kg","体脂肪率","食後散歩"].join(",")];
   for (const k of Object.keys(data).sort()) {
     const dd = data[k];
     if (!dd || !(dd.foods || []).length) continue;
@@ -324,7 +333,7 @@ function buildCsv() {
       rows.push([k, (DAY_LABEL[dd.dayType] || "休養"), q(f.name), f.p ?? 0, f.c ?? 0,
         f.veg ? 1 : 0, f.omega3 ? 1 : 0, f.fiber ? 1 : 0, f.cat || "",
         i === 0 ? dp : "", i === 0 ? dc : "",
-        i === 0 ? (dd.sleep ?? "") : "", i === 0 ? (dd.weight ?? "") : "", i === 0 ? (dd.muscle ?? "") : "", i === 0 ? (dd.fatpct ?? "") : "", i === 0 ? (dd.walked ? 1 : 0) : ""].join(","));
+        i === 0 ? (dd.sleep ?? "") : "", i === 0 ? (dd.bedtime ?? "") : "", i === 0 ? (dd.waketime ?? "") : "", i === 0 ? (dd.rhr ?? "") : "", i === 0 ? q(dd.mood ?? "") : '""', i === 0 ? (dd.weight ?? "") : "", i === 0 ? (dd.muscle ?? "") : "", i === 0 ? (dd.fatpct ?? "") : "", i === 0 ? (dd.walked ? 1 : 0) : ""].join(","));
     });
   }
   return rows.join("\n");
@@ -410,8 +419,8 @@ async function onInbodyPicked(file) {
   busy = true; errMsg = ""; render();
   try {
     const { base64, mediaType } = await resizeImage(file);
-    const r = await extractBodyComp(base64, mediaType);
-    if (r.weight == null && r.muscle == null && r.fatpct == null) {
+    const r = await extractHealthData(base64, mediaType);
+    if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null) {
       errMsg = "数値を読み取れませんでした。数値が写った画面で撮り直してみてください。";
     } else {
       const key = toKey(cursor);
@@ -419,6 +428,10 @@ async function onInbodyPicked(file) {
       if (r.weight != null) patch.weight = String(r.weight);
       if (r.muscle != null) patch.muscle = r.muscle;
       if (r.fatpct != null) patch.fatpct = r.fatpct;
+      if (r.sleep != null) patch.sleep = String(r.sleep);
+      if (r.bedtime != null) patch.bedtime = r.bedtime;
+      if (r.waketime != null) patch.waketime = r.waketime;
+      if (r.rhr != null) patch.rhr = r.rhr;
       updateDay(key, patch);
     }
   } catch (e) { errMsg = "読み取りに失敗しました。もう一度試してください。"; }
@@ -625,15 +638,17 @@ function renderLog() {
     ${day.walked ? `<div class="walknote">食後の散歩は食後血糖の面でプラス。</div>` : ""}
 
     <div class="section" style="padding-bottom:8px">
-      <div class="seclabel">体組成（InBody等のスクショから）</div>
+      <div class="seclabel">測定データ（InBody・Fitbit等のスクショ）</div>
       <div class="card" style="margin-top:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">
         <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:44px;height:44px">📊</button>
         <div style="flex:1;font-size:13px;color:var(--muted)">
-          ${(day.muscle != null || day.fatpct != null)
-            ? `<span style="color:var(--text)">筋量 <b class="mono" style="color:var(--green)">${day.muscle ?? "—"}</b>kg ・ 体脂肪 <b class="mono" style="color:var(--ice)">${day.fatpct ?? "—"}</b>%</span>`
-            : "測定結果のスクショを選ぶと、体重・筋量・体脂肪率を自動で記録します。"}
+          ${(day.muscle != null || day.fatpct != null || day.bedtime || day.waketime || day.rhr != null)
+            ? `<span style="color:var(--text)">${day.muscle != null ? `筋量 <b class="mono" style="color:var(--green)">${day.muscle}</b>kg` : ""}${day.fatpct != null ? ` ・体脂肪 <b class="mono" style="color:var(--ice)">${day.fatpct}</b>%` : ""}${(day.bedtime || day.waketime) ? `<br>睡眠 <b class="mono" style="color:var(--violet)">${day.bedtime ?? "—"}〜${day.waketime ?? "—"}</b>（目標2:30〜9:30）` : ""}${day.rhr != null ? ` ・安静時心拍 <b class="mono" style="color:var(--ice)">${day.rhr}</b>bpm` : ""}</span>`
+            : "体組成計や睡眠トラッカーのスクショから、体重・筋量・体脂肪・睡眠・就寝起床・心拍を自動記録します。"}
         </div>
       </div>
+      <input class="setinput" data-mood placeholder="体調ひとこと（任意。例：すっきり／だるい）"
+        value="${esc(day.mood || "")}" style="margin-top:8px;font-size:13px">
     </div>
   `;
 }
@@ -861,6 +876,11 @@ function bindEvents() {
       w.checks = w.checks.includes(id) ? w.checks.filter((x) => x !== id) : w.checks.concat(id);
       updateDay(key, { workout: w });
     }));
+  const md = $("[data-mood]"); if (md) {
+    md.addEventListener("change", () => {
+      updateDay(toKey(cursor), { mood: md.value.trim() || null });
+    });
+  }
   const wn = $("[data-wnote]"); if (wn) {
     wn.addEventListener("change", () => {
       const key = toKey(cursor);
