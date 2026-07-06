@@ -152,11 +152,21 @@ function updateDay(key, patch) {
 }
 function apiKey() { return localStorage.getItem(API_KEY_KEY) || ""; }
 
-function pace7(anchorKey) {
+// 食材ペースの週は「月曜始まり・日曜終わり」の固定週（WEEK_STARTで変更可：1=月,0=日）
+const WEEK_START = 1;
+function weekInfo(anchorKey) {
   const [y, m, d] = anchorKey.split("-").map(Number);
+  const anchor = new Date(y, m - 1, d);
+  const offset = (anchor.getDay() - WEEK_START + 7) % 7; // 週初からの経過日数（0=週初日）
+  const start = new Date(y, m - 1, d - offset);
+  const end = new Date(start); end.setDate(start.getDate() + 6);
+  return { start, end, dayN: offset + 1, remain: 6 - offset };
+}
+function pace7(anchorKey) {
+  const w = weekInfo(anchorKey);
   const counts = { saba: 0, fish: 0, tuna: 0, red: 0, shell: 0 };
-  for (let i = 0; i < 7; i++) {
-    const dd = data[toKey(new Date(y, m - 1, d - i))];
+  for (let i = 0; i < w.dayN; i++) {
+    const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
     ((dd && dd.foods) || []).forEach((f) => { if (f.cat && counts[f.cat] != null) counts[f.cat]++; });
   }
   return counts;
@@ -293,7 +303,7 @@ ${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${fmt1(day.w
 ` : ""}${day.wrist ? `- 翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}
 ` : ""}- 食べたもの：${foodList}
 - 直近7日平均：${weekAvgFor(new Date(y, m - 1, d)) ?? "—"}g
-- 今週の食材ペース：鯖缶${pc.saba}/3、生魚${pc.fish}/1、ツナ${pc.tuna}/2、赤身${pc.red}/1、貝${pc.shell}/1
+- 今週の食材ペース（月曜始まり・日曜締め、本日${weekInfo(key).dayN}日目）：鯖缶${pc.saba}/3、生魚${pc.fish}/1、ツナ${pc.tuna}/2、赤身${pc.red}/1、貝${pc.shell}/1（週前半の未達を責めない。週後半で残りが多い場合のみ軽く献立提案してよい）
 
 出力：日本語で2〜3文の一言評価のみ。前置き・見出し・絵文字・マークダウン不要。`} ],
   });
@@ -509,6 +519,8 @@ function renderLog() {
   const hasFi = day.foods.some((f) => f.fiber);
   const wavg = weekAvgFor(cursor);
   const pc = pace7(key);
+  const wi = weekInfo(key);
+  const wd = ["日","月","火","水","木","金","土"][new Date(key.split("-")[0], key.split("-")[1]-1, key.split("-")[2]).getDay()];
 
   return `
     <div class="datenav">
@@ -604,7 +616,7 @@ function renderLog() {
     </div>
 
     <div class="section">
-      <div class="seclabel">今週の食材ペース（直近7日）</div>
+      <div class="seclabel">今週の食材ペース（月〜日・${wd}曜＝${wi.dayN}日目）</div>
       <div class="card pacebox">
         ${PACE.map((row) => {
           const n = pc[row.key], met = n >= row.target;
@@ -617,7 +629,7 @@ function renderLog() {
           </div>`;
         }).join("")}
       </div>
-      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週</div>
+      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>
     </div>
 
     <div class="inputrow">
@@ -868,7 +880,7 @@ function renderSettings() {
           <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・山行）から自動判定。<br>
           歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
           筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）。翌朝の手首で前進/一段戻すを判定。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
-          糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週。<br>
+          糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
           データ保存：この端末のみ（サーバーには何も送りません）。
         </div>
       </div>
