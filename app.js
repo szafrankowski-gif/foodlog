@@ -61,6 +61,7 @@ const PACE = [
   { key: "tuna",  label: "ツナ缶",       target: 2, color: "#9D8CE0" },
   { key: "red",   label: "赤身肉",       target: 1, color: "#E08C8C" },
   { key: "shell", label: "貝類",         target: 1, color: "#F0B458" },
+  { key: "liver", label: "鶏レバー",     target: 1, max: 2, color: "#C98C5F" },
 ];
 
 const SEED = {
@@ -164,7 +165,7 @@ function weekInfo(anchorKey) {
 }
 function pace7(anchorKey) {
   const w = weekInfo(anchorKey);
-  const counts = { saba: 0, fish: 0, tuna: 0, red: 0, shell: 0 };
+  const counts = { saba: 0, fish: 0, tuna: 0, red: 0, shell: 0, liver: 0 };
   for (let i = 0; i < w.dayN; i++) {
     const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
     ((dd && dd.foods) || []).forEach((f) => { if (f.cat && counts[f.cat] != null) counts[f.cat]++; });
@@ -188,7 +189,7 @@ const NUTRITION_RULES = `各品目について次を判定：
 - veg: 緑黄色野菜か(にんじん/トマト/かぼちゃ/ほうれん草/小松菜/ブロッコリー/オクラ/ピーマン等ならtrue)
 - omega3: オメガ3が豊富な魚か(鯖/いわし/あじ/鮭/さんま等の青魚・鮭ならtrue。ツナ・白身魚はfalse)
 - fiber: 食物繊維が豊富か(海藻/きのこ/豆類/野菜/全粒穀物/玄米等ならtrue)
-- cat: 食材カテゴリ。鯖の缶詰なら"saba"、それ以外の魚(鮭/いわし/あじ/さんま/白身魚/生魚/焼き魚、および鯖の生・焼き)なら"fish"、ツナ缶なら"tuna"、牛・ラム等の赤身肉(焼肉/ステーキ/牛丼含む)なら"red"、貝類(あさり/牡蠣/しじみ/ホタテ等)なら"shell"、いずれでもなければ""(空文字)
+- cat: 食材カテゴリ。鯖の缶詰なら"saba"、それ以外の魚(鮭/いわし/あじ/さんま/白身魚/生魚/焼き魚、および鯖の生・焼き)なら"fish"、ツナ缶なら"tuna"、牛・ラム等の赤身肉(焼肉/ステーキ/牛丼含む)なら"red"、貝類(あさり/牡蠣/しじみ/ホタテ等)なら"shell"、鶏レバー・レバー(焼き鳥のレバー串含む)なら"liver"、いずれでもなければ""(空文字)
 ユーザーがたんぱく質や糖質のg数を明記していた場合はその値を優先すること。
 出力はJSON配列のみ。各要素は {"name":品名,"p":int,"c":int,"veg":bool,"omega3":bool,"fiber":bool,"cat":string}。
 前置き・説明・コードフェンス・マークダウンは一切不要。`;
@@ -303,7 +304,7 @@ ${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${fmt1(day.w
 ` : ""}${day.wrist ? `- 翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}
 ` : ""}- 食べたもの：${foodList}
 - 直近7日平均：${weekAvgFor(new Date(y, m - 1, d)) ?? "—"}g
-- 今週の食材ペース（月曜始まり・日曜締め、本日${weekInfo(key).dayN}日目）：鯖缶${pc.saba}/3、生魚${pc.fish}/1、ツナ${pc.tuna}/2、赤身${pc.red}/1、貝${pc.shell}/1（週前半の未達を責めない。週後半で残りが多い場合のみ軽く献立提案してよい）
+- 今週の食材ペース（月曜始まり・日曜締め、本日${weekInfo(key).dayN}日目）：鯖缶${pc.saba}/3、生魚${pc.fish}/1、ツナ${pc.tuna}/2、赤身${pc.red}/1、貝${pc.shell}/1、鶏レバー${pc.liver}/1〜2（レバーはビタミンA過剰回避のため週2が上限。週3以上のときだけ「今週はもう十分」と一言添える）（週前半の未達を責めない。週後半で残りが多い場合のみ軽く献立提案してよい）
 
 出力：日本語で2〜3文の一言評価のみ。前置き・見出し・絵文字・マークダウン不要。`} ],
   });
@@ -619,17 +620,22 @@ function renderLog() {
       <div class="seclabel">今週の食材ペース（月〜日・${wd}曜＝${wi.dayN}日目）</div>
       <div class="card pacebox">
         ${PACE.map((row) => {
-          const n = pc[row.key], met = n >= row.target;
-          const dots = Array.from({ length: Math.max(row.target, n) }).map((_, i) =>
-            `<span class="dot" style="${i < n ? `background:${row.color};border-color:${row.color}` : i < row.target ? `border-color:${row.color}` : "opacity:.4"}"></span>`).join("");
+          const n = pc[row.key];
+          const hi = row.max || row.target;
+          const met = n >= row.target && n <= hi;
+          const over = n > hi;
+          const dots = Array.from({ length: Math.max(hi, n) }).map((_, i) =>
+            `<span class="dot" style="${i < n ? `background:${over && i >= hi ? "var(--amber)" : row.color};border-color:${over && i >= hi ? "var(--amber)" : row.color}` : i < row.target ? `border-color:${row.color}` : "opacity:.4"}"></span>`).join("");
+          const range = row.max ? `${row.target}〜${row.max}` : `${row.target}`;
+          const stat = over ? `${n}/${range}・今週は十分` : met ? `達成 ${n}/${range}` : `${n}/${range}・あと${row.target - n}`;
           return `<div class="pacerow">
             <span class="pacename">${row.label}</span>
             <div class="dots">${dots}</div>
-            <span class="pacestat mono ${met?"met":""}">${met?`達成 ${n}/${row.target}`:`${n}/${row.target}・あと${row.target-n}`}</span>
+            <span class="pacestat mono ${met?"met":""}" ${over?`style="color:var(--amber)"`:""}>${stat}</span>
           </div>`;
         }).join("")}
       </div>
-      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>
+      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>
     </div>
 
     <div class="inputrow">
