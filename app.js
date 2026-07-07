@@ -5,6 +5,10 @@ const FLOOR = 100, CEILING = 120;
 const CARB_LIMIT = { rest: 250, active: 330 }; // 61kg・高活動量での維持ライン。血糖対策は量でなく質とタイミングで
 const DATA_KEY = "mealog:data";
 const API_KEY_KEY = "mealog:apikey";
+const GH_TOKEN_KEY = "mealog:ghtoken";
+const GIST_ID_KEY = "mealog:gistid";
+const LAST_SYNC_KEY = "mealog:lastsync";
+const GIST_FILE = "foodlog-data.json";
 // 用途別モデル（コストと質のバランス。変えたい時はここを編集）
 const MODEL_ESTIMATE = "claude-haiku-4-5-20251001"; // テキスト概算：軽量・高速・低コスト
 const MODEL_PHOTO    = "claude-sonnet-4-6";          // 写真解析：認識精度重視
@@ -156,13 +160,106 @@ function load() {
 }
 function save() {
   try { localStorage.setItem(DATA_KEY, JSON.stringify(data)); } catch (e) {}
+  schedulePush();
 }
 function updateDay(key, patch) {
-  data[key] = Object.assign({}, getDay(key), patch);
+  data[key] = Object.assign({}, getDay(key), patch, { _m: Date.now() });
   save();
   render();
 }
 function apiKey() { return localStorage.getItem(API_KEY_KEY) || ""; }
+
+// ---------- デバイス間同期（GitHub 秘密Gist） ----------
+// データの正本＝秘密Gist内の foodlog-data.json。各端末は起動時にpull→マージし、変更のたびに自動push。
+// マージは「日付ごとに更新時刻(_m)が新しい方を採用」。オフライン時はlocalStorageで動き続け、復帰時に同期。
+const ghToken = () => localStorage.getItem(GH_TOKEN_KEY) || "";
+const gistId = () => localStorage.getItem(GIST_ID_KEY) || "";
+let syncState = ghToken() ? "idle" : "off"; // off | idle | busy | ok | error
+let syncReady = !ghToken(); // 初回pullが済むまでpushしない（他端末のデータを上書きしないため）
+let pushTimer = null;
+
+async function ghApi(path, opts = {}) {
+  return fetch("https://api.github.com" + path, Object.assign({
+    headers: {
+      "Authorization": "Bearer " + ghToken(),
+      "Accept": "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+  }, opts));
+}
+
+function mergeRemote(remote) {
+  if (!remote || typeof remote !== "object") return;
+  for (const k of Object.keys(remote)) {
+    const r = remote[k], l = data[k];
+    if (!r) continue;
+    if (!l || (Number(r._m) || 0) > (Number(l._m) || 0)) data[k] = r;
+  }
+}
+
+async function syncPull() {
+  if (!ghToken()) return;
+  let id = gistId();
+  if (!id) {
+    // 初回：既存のfoodlog Gistを探す（他端末が作成済みの場合）
+    const res = await ghApi("/gists?per_page=100");
+    if (!res.ok) throw new Error("gist list " + res.status);
+    const list = await res.json();
+    const hit = (Array.isArray(list) ? list : []).find((g) => g.files && g.files[GIST_FILE]);
+    if (!hit) return; // まだどの端末も作っていない→この後のpushで新規作成
+    id = hit.id;
+    localStorage.setItem(GIST_ID_KEY, id);
+  }
+  const res = await ghApi("/gists/" + id);
+  if (res.status === 404) { localStorage.removeItem(GIST_ID_KEY); return; }
+  if (!res.ok) throw new Error("gist get " + res.status);
+  const g = await res.json();
+  const f = g.files && g.files[GIST_FILE];
+  if (!f) return;
+  let content = f.content;
+  if (f.truncated && f.raw_url) content = await (await fetch(f.raw_url)).text();
+  mergeRemote(JSON.parse(content));
+  try { localStorage.setItem(DATA_KEY, JSON.stringify(data)); } catch (e) {}
+}
+
+async function syncPush() {
+  if (!ghToken()) return;
+  const content = JSON.stringify(data);
+  let id = gistId();
+  let res = null;
+  if (id) {
+    res = await ghApi("/gists/" + id, { method: "PATCH", body: JSON.stringify({ files: { [GIST_FILE]: { content } } }) });
+    if (res.status === 404) { localStorage.removeItem(GIST_ID_KEY); id = ""; }
+  }
+  if (!id) {
+    res = await ghApi("/gists", { method: "POST", body: JSON.stringify({ public: false, description: "foodlog data (auto-sync)", files: { [GIST_FILE]: { content } } }) });
+    if (res.ok) { const g = await res.json(); if (g.id) localStorage.setItem(GIST_ID_KEY, g.id); }
+  }
+  if (!res || !res.ok) throw new Error("gist push " + (res ? res.status : "?"));
+  localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
+}
+
+function schedulePush() {
+  if (!ghToken() || !syncReady) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(async () => {
+    try { syncState = "busy"; await syncPush(); syncState = "ok"; }
+    catch (e) { syncState = "error"; }
+    if (view === "settings") render();
+  }, 2500);
+}
+
+async function syncNow() {
+  if (!ghToken()) return;
+  syncState = "busy"; render();
+  try {
+    await syncPull();
+    await syncPush();
+    syncState = "ok";
+  } catch (e) { syncState = "error"; }
+  syncReady = true;
+  render();
+}
 
 // 食材ペースの週は「月曜始まり・日曜終わり」の固定週（WEEK_STARTで変更可：1=月,0=日）
 const WEEK_START = 1;
@@ -413,6 +510,8 @@ function importJson(file) {
       const obj = JSON.parse(r.result);
       if (typeof obj !== "object" || !obj) throw new Error();
       if (confirm("バックアップから復元します。現在のデータに上書きマージされます。よろしいですか？")) {
+        const now = Date.now();
+        for (const k of Object.keys(obj)) { if (obj[k] && typeof obj[k] === "object") obj[k]._m = now; }
         data = Object.assign({}, data, obj);
         save(); setMsg = "復元しました。"; render();
       }
@@ -900,6 +999,25 @@ function renderSettings() {
       </div>
 
       <div class="card setbox">
+        <div class="settitle">🔄 デバイス間同期（GitHub Gist）</div>
+        <div class="setdesc">
+          あなたのGitHubアカウントの<b>秘密Gist</b>にデータを自動保存し、スマホ・PCどの端末からも同じデータを参照できます。<br>
+          設定：GitHubでgist権限（Read and write）のみの Fine-grained トークンを発行し、下に貼って保存（各端末で1回）。以降は全自動——起動時に取得、変更のたびに保存。マージは日付ごとに新しい方が優先されます。
+        </div>
+        <div style="font-size:12px;margin-bottom:8px;color:${ghToken() ? (syncState === "error" ? "var(--amber)" : "var(--green)") : "var(--amber)"}">
+          現在：${!ghToken() ? "未設定（データはこの端末内のみ）"
+            : syncState === "busy" ? '<span class="spin">↻</span> 同期中…'
+            : syncState === "error" ? "同期エラー（トークン・通信を確認してください）"
+            : (() => { const t = Number(localStorage.getItem(LAST_SYNC_KEY) || 0); return t ? `同期済み ✓（最終 ${new Date(t).getHours()}:${String(new Date(t).getMinutes()).padStart(2,"0")}）` : "設定済み（初回同期待ち）"; })()}
+        </div>
+        <input class="setinput mono" id="ghtokenInput" type="password" placeholder="github_pat_..." value="${ghToken() ? "●●●●●●●●●●●●" : ""}">
+        <div class="setrow">
+          <button class="setbtn" data-savegh>保存して同期</button>
+          ${ghToken() ? `<button class="setbtn ghost" data-syncnow>今すぐ同期</button><button class="setbtn danger" data-delgh>トークン削除</button>` : ""}
+        </div>
+      </div>
+
+      <div class="card setbox">
         <div class="settitle">💾 バックアップ</div>
         <div class="setdesc">データはこの端末のブラウザ内に保存されています。ブラウザのデータ消去で消えるので、ときどき書き出しておくと安心です。</div>
         <div class="setrow">
@@ -917,7 +1035,7 @@ function renderSettings() {
           歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
           筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）。翌朝の手首で前進/一段戻すを判定。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
           糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
-          データ保存：この端末のみ（サーバーには何も送りません）。
+          データ保存：この端末＋（同期設定時）あなたのGitHub秘密Gist。Anthropic・GitHub以外の外部には何も送信しません。
         </div>
       </div>
     </div>
@@ -1024,6 +1142,22 @@ function bindEvents() {
     if (confirm("APIキーを削除しますか？")) { localStorage.removeItem(API_KEY_KEY); setMsg = "削除しました。"; render(); }
   });
 
+  const sg = $("[data-savegh]"); if (sg) sg.addEventListener("click", async () => {
+    const v = $("#ghtokenInput").value.trim();
+    if (!v || v.startsWith("●")) { setMsg = "トークンを入力してください。"; render(); return; }
+    localStorage.setItem(GH_TOKEN_KEY, v);
+    setMsg = ""; syncReady = false;
+    await syncNow();
+    setMsg = syncState === "error" ? "トークンを保存しましたが同期に失敗しました。gist権限（Read and write）が付いているか確認してください。" : "同期を開始しました。";
+    render();
+  });
+  const sn = $("[data-syncnow]"); if (sn) sn.addEventListener("click", () => syncNow());
+  const dg = $("[data-delgh]"); if (dg) dg.addEventListener("click", () => {
+    if (confirm("同期トークンを削除しますか？（Gist上のデータは残ります。この端末はローカル保存に戻ります）")) {
+      localStorage.removeItem(GH_TOKEN_KEY); syncState = "off"; setMsg = "削除しました。"; render();
+    }
+  });
+
   const ej = $("[data-exportjson]"); if (ej) ej.addEventListener("click", exportJson);
   const ec = $("[data-exportcsv]"); if (ec) ec.addEventListener("click", exportCsv);
   const ij = $("[data-importjson]"); if (ij) ij.addEventListener("click", () => $("#importInput").click());
@@ -1073,6 +1207,17 @@ if ("serviceWorker" in navigator) {
 
 // 起動
 load();
+// 起動時同期：初回pullが終わるまでpushしない（他端末のデータ保護）
+if (ghToken()) {
+  (async () => {
+    try { syncState = "busy"; await syncPull(); syncState = "ok"; }
+    catch (e) { syncState = "error"; }
+    syncReady = true;
+    render();
+    schedulePush();
+  })();
+}
+window.addEventListener("online", () => schedulePush());
 // 画面幅がブレークポイント（900px）をまたいだら再描画
 window.matchMedia("(min-width: 900px)").addEventListener("change", () => render());
 // データのある最新日か今日のうち、新しい方を開く
