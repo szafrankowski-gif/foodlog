@@ -508,14 +508,26 @@ function removeFood(i) {
 }
 
 // ---------- 描画 ----------
+function isWide() { return window.matchMedia("(min-width: 900px)").matches; }
+
 function render() {
   const app = $("#app");
+  const wide = isWide();
+  let body;
+  if (view === "settings") {
+    body = `<div class="${wide ? "wide-single" : ""}">${renderSettings()}</div>`;
+  } else if (wide) {
+    // 大画面：記録（左）+ 振り返り（右）を同時表示
+    body = `<div class="wide-grid"><div class="wcol">${renderLog()}</div><div class="wcol sub">${renderReview()}</div></div>`;
+  } else {
+    body = view === "log" ? renderLog() : renderReview();
+  }
   app.innerHTML = `
     <div class="tabs">
-      ${[["log","記録"],["review","振り返り"],["settings","設定"]].map(([v,l]) =>
-        `<button class="tab ${view===v?"on":""}" data-view="${v}">${l}</button>`).join("")}
+      ${(wide ? [["log","記録・振り返り"],["settings","設定"]] : [["log","記録"],["review","振り返り"],["settings","設定"]]).map(([v,l]) =>
+        `<button class="tab ${view===v || (wide && v==="log" && view==="review") ?"on":""}" data-view="${v}">${l}</button>`).join("")}
     </div>
-    ${view === "log" ? renderLog() : view === "review" ? renderReview() : renderSettings()}
+    ${body}
   `;
   bindEvents();
 }
@@ -1061,6 +1073,8 @@ if ("serviceWorker" in navigator) {
 
 // 起動
 load();
+// 画面幅がブレークポイント（900px）をまたいだら再描画
+window.matchMedia("(min-width: 900px)").addEventListener("change", () => render());
 // データのある最新日か今日のうち、新しい方を開く
 (() => {
   const todayKey = toKey(new Date());
