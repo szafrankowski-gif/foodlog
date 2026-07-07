@@ -11,20 +11,31 @@ const MODEL_PHOTO    = "claude-sonnet-4-6";          // 写真解析：認識精
 const MODEL_BAKAO    = "claude-sonnet-4-6";          // ばかお評価：文章の質重視
 const MODEL_TEST     = MODEL_ESTIMATE;               // キー保存時のテスト用（最安）
 
-const DAY_LABEL = { rest: "休養", trainA: "筋トレA", trainB: "筋トレB", climb: "登攀・柔術", mountain: "山行" };
-const DAY_SHORT = { trainA: "筋A", trainB: "筋B", climb: "登", mountain: "山" };
+const DAY_LABEL = { rest: "休養", trainA: "筋トレA", trainB: "筋トレB", climb: "登攀・柔術", mountain: "山行", aerobic: "有酸素" };
+const DAY_SHORT = { trainA: "筋A", trainB: "筋B", climb: "登", mountain: "山", aerobic: "有" };
 
 // ---- v2: 実績ベース判定 ----
 // dayTypeの「宣言」を廃止。その日の実績（筋トレチェック・登攀・山行）から運動日/休養日を自動判定する。
 // 筋トレ(A/B)は「1種目以上チェック」で初めて実績＝運動日。登攀・山行はトグル自体が実績。
 // 歩数は参考表示のみ（目標や警告に使わない）。休養日で15,000歩超の日だけ一行提案を出す（目標値は変えない）。
-const ACTS = ["trainA", "trainB", "climb", "mountain"];
+const ACTS = ["trainA", "trainB", "climb", "mountain", "aerobic"];
 const STEP_NOTE_MIN = 15000;
 const dayActs = (dd) => (dd && dd.acts) || [];
 const checkedCount = (dd) => ((((dd || {}).workout) || {}).checks || []).length;
+// 有酸素(aerobic)は設計上、運動日判定に影響しない（糖質レバーに触らない純粋な実績記録）
 const isActiveDay = (dd) =>
   dayActs(dd).some((a) => a === "climb" || a === "mountain") ||
   (dayActs(dd).some((a) => a === "trainA" || a === "trainB") && checkedCount(dd) > 0);
+// 今週（月曜始まり）の有酸素実施回数
+function weeklyAerobic(anchorKey) {
+  const w = weekInfo(anchorKey);
+  let n = 0;
+  for (let i = 0; i < w.dayN; i++) {
+    const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
+    if (dayActs(dd).includes("aerobic")) n++;
+  }
+  return n;
+}
 const actLabel = (dd) => dayActs(dd).length ? dayActs(dd).map((a) => DAY_LABEL[a]).join("+") : "休養";
 const actShort = (dd) => dayActs(dd).map((a) => DAY_SHORT[a] || "").join("");
 
@@ -297,6 +308,7 @@ async function fetchBakao(key) {
 - 糖質：${carbs}g
 - 歩数：${day.steps != null ? day.steps.toLocaleString() + "歩（参考値。目標や警告には使わない。ただし休養日で15,000歩を超えている日は、糖質+40〜50g程度の追加補給に軽く触れてよい。責めない・警告調にしない）" : "記録なし"}
 - サプリ：クレアチン${creatineOn(day) ? "済" : "未"}／ビタミンD${vitdOn(day) ? "済" : "未"}（クレアチン3〜5gは毎日方針。未の日はごく軽く一言リマインドしてよい。説教はしない）
+- 有酸素（Zone2）：本日${dayActs(day).includes("aerobic") ? "実施" : "なし"}／今週${weeklyAerobic(key)}回（目安1〜2回。糖質目標には影響しない。未実施を責めない。実施日は一言認めてよい）
 - 睡眠：${day.sleep != null ? day.sleep + "時間（目標7時間）" : "記録なし"}${(day.bedtime || day.waketime) ? `／就寝${day.bedtime ?? "—"}・起床${day.waketime ?? "—"}（目標2:30就寝・9:30起床。ズレはセットで崩れるので就寝側を主因として見る）` : ""}${day.rhr != null ? `／安静時心拍${day.rhr}bpm（平常より明らかに高い朝は回復不足のサイン）` : ""}${day.mood ? `／本人の体調メモ：「${day.mood}」（数字と体感の対応を一言で拾う）` : ""}
 - 緑黄色野菜：${hasVeg ? "あり" : "なし"}／オメガ3の魚：${hasOmega3 ? "あり" : "なし"}
 - 運動実績：${actLabel(day)}${dayActs(day).filter((a)=>MENU[a]).map((a)=>`／${DAY_LABEL[a]}種目：${(((day.workout||{}).checks)||[]).filter((id)=>MENU[a].some((ex)=>ex.id===id)).length}/${MENU[a].length}`).join("")}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}
@@ -327,8 +339,9 @@ async function extractHealthData(base64, mediaType) {
 - waketime: 起床時刻（"HH:MM"の24時間表記。例：11時31分→"11:31"）
 - rhr: 安静時心拍(bpm)
 - steps: 歩数（整数。「20,321歩」→20321）
+- aerobic: 運動アクティビティの記録画面か（「ウォーキング」「ランニング」「サイクリング」等の名称と、時間・平均心拍・距離などが表示されたワークアウト詳細画面ならtrue。体組成・睡眠・日次サマリー画面ならnull）
 写っていない・読み取れない項目はnull。睡眠スコアは不要。出力はJSONオブジェクトのみ：
-{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull,"steps":数値orNull}
+{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull,"steps":数値orNull,"aerobic":真偽値orNull}
 前置き・説明・コードフェンス不要。` },
     ] }],
   });
@@ -338,7 +351,8 @@ async function extractHealthData(base64, mediaType) {
   return { weight: num(o.weight), muscle: num(o.muscle), fatpct: num(o.fatpct),
            sleep: num(o.sleep), bedtime: tm(o.bedtime), waketime: tm(o.waketime),
            rhr: o.rhr != null && !isNaN(Number(o.rhr)) ? Math.round(Number(o.rhr)) : null,
-           steps: o.steps != null && !isNaN(Number(o.steps)) ? Math.round(Number(o.steps)) : null };
+           steps: o.steps != null && !isNaN(Number(o.steps)) ? Math.round(Number(o.steps)) : null,
+           aerobic: o.aerobic === true };
 }
 
 // 写真を縮小してbase64化（通信量・コスト対策）
@@ -464,7 +478,7 @@ async function onInbodyPicked(file) {
   try {
     const { base64, mediaType } = await resizeImage(file);
     const r = await extractHealthData(base64, mediaType);
-    if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null && r.steps == null) {
+    if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null && r.steps == null && !r.aerobic) {
       errMsg = "数値を読み取れませんでした。数値が写った画面で撮り直してみてください。";
     } else {
       const key = toKey(cursor);
@@ -477,6 +491,10 @@ async function onInbodyPicked(file) {
       if (r.waketime != null) patch.waketime = r.waketime;
       if (r.rhr != null) patch.rhr = r.rhr;
       if (r.steps != null) patch.steps = r.steps;
+      if (r.aerobic) {
+        const cur = dayActs(getDay(key));
+        if (!cur.includes("aerobic")) patch.acts = cur.concat("aerobic");
+      }
       updateDay(key, patch);
     }
   } catch (e) { errMsg = "読み取りに失敗しました。もう一度試してください。"; }
@@ -537,7 +555,7 @@ function renderLog() {
       ${ACTS.map((t) =>
         `<button class="dt active ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
-    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日 · 目標120g／糖質330g":"休養日 · 基準100g／糖質250g"}</b>${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日になります）" : ""}</div>
+    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日 · 目標120g／糖質330g":"休養日 · 基準100g／糖質250g"}</b>${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日になります）" : ""}<br>今週の有酸素 <b class="mono">${weeklyAerobic(key)}</b>/1〜2${day.acts.includes("aerobic") ? "（有酸素は糖質目標に影響しません）" : ""}</div>
 
     ${dayActs(day).filter((a) => MENU[a]).map((a) => `
     <div class="section" style="padding-top:0;padding-bottom:14px">
@@ -883,7 +901,7 @@ function renderSettings() {
         <div class="settitle">ℹ️ このアプリについて</div>
         <div class="setdesc">
           foodlog v2 — たんぱく質 基準100g／運動日目標120g方式の食事＋筋トレログ。<br>
-          <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・山行）から自動判定。<br>
+          <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・山行）から自動判定。有酸素（Zone2）トグルは週次実績の記録のみで糖質目標には影響しない（Fitbit等のワークアウト画面スクショを📊に読ませると自動ON）。<br>
           歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
           筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）。翌朝の手首で前進/一段戻すを判定。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
           糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
@@ -1028,7 +1046,7 @@ document.getElementById("importInput").addEventListener("change", (e) => {
   const st = document.createElement("style");
   st.textContent = `
     .daytype5 { flex-wrap: wrap; }
-    .daytype5 .dt { flex: 1 1 22%; padding: 9px 0; font-size: 12px; }
+    .daytype5 .dt { flex: 1 1 18%; padding: 9px 0; font-size: 11px; }
     .tiles { display: grid !important; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     .tile { padding: 12px 2px; }
     .tilelabel { font-size: 10px; }
