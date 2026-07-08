@@ -437,7 +437,7 @@ async function extractHealthData(base64, mediaType) {
 - waketime: 起床時刻（"HH:MM"の24時間表記。例：11時31分→"11:31"）
 - rhr: 安静時心拍(bpm)
 - steps: 歩数（整数。「20,321歩」→20321）
-- aerobic: 運動アクティビティの記録画面か（「ウォーキング」「ランニング」「サイクリング」等の名称と、時間・平均心拍・距離などが表示されたワークアウト詳細画面ならtrue。体組成・睡眠・日次サマリー画面ならnull）
+- aerobic: 有酸素運動の記録画面か（「ウォーキング」「ランニング」「サイクリング」「ハイキング」等の有酸素系アクティビティ名と、時間・平均心拍などが表示された画面ならtrue。「ワークアウト」「筋トレ」「ウェイト」等の筋力トレーニング画面、体組成・睡眠・日次サマリー画面はnull）
 写っていない・読み取れない項目はnull。睡眠スコアは不要。出力はJSONオブジェクトのみ：
 {"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull,"steps":数値orNull,"aerobic":真偽値orNull}
 前置き・説明・コードフェンス不要。` },
@@ -1039,6 +1039,7 @@ function renderSettings() {
           <button class="setbtn" data-savegh>保存して同期</button>
           ${ghToken() ? `<button class="setbtn ghost" data-syncnow>今すぐ同期</button><button class="setbtn danger" data-delgh>トークン削除</button>` : ""}
         </div>
+        ${gistId() ? `<div style="font-size:11px;color:var(--muted);margin-top:8px;word-break:break-all">分析用Gist ID（AIに全データ分析を頼むときに伝える）：<br><span class="mono" style="color:var(--text);user-select:all">${esc(gistId())}</span></div>` : ""}
       </div>
 
       <div class="card setbox">
