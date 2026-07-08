@@ -298,8 +298,9 @@ const NUTRITION_RULES = `各品目について次を判定：
 - omega3: オメガ3が豊富な魚か(鯖/いわし/あじ/鮭/さんま等の青魚・鮭ならtrue。ツナ・白身魚はfalse)
 - fiber: 食物繊維が豊富か(海藻/きのこ/豆類/野菜/全粒穀物/玄米等ならtrue)
 - cat: 食材カテゴリ。鯖の缶詰なら"saba"、それ以外の魚(鮭/いわし/あじ/さんま/白身魚/生魚/焼き魚、および鯖の生・焼き)なら"fish"、ツナ缶なら"tuna"、牛・ラム等の赤身肉(焼肉/ステーキ/牛丼含む)なら"red"、貝類(あさり/牡蠣/しじみ/ホタテ等)なら"shell"、鶏レバー・レバー(焼き鳥のレバー串含む)なら"liver"、いずれでもなければ""(空文字)
+- t: 食べた時刻。本文に時刻の記載があれば"HH:MM"形式（例：「21時に」→"21:00"、「昼12時半」→"12:30"）。記載がなければnull
 ユーザーがたんぱく質や糖質のg数を明記していた場合はその値を優先すること。
-出力はJSON配列のみ。各要素は {"name":品名,"p":int,"c":int,"veg":bool,"omega3":bool,"fiber":bool,"cat":string}。
+出力はJSON配列のみ。各要素は {"name":品名,"p":int,"c":int,"veg":bool,"omega3":bool,"fiber":bool,"cat":string,"t":文字列orNull}。
 前置き・説明・コードフェンス・マークダウンは一切不要。`;
 
 async function callApi(body) {
@@ -363,7 +364,7 @@ async function fetchBakao(key) {
   const target = active ? CEILING : FLOOR;
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOmega3 = day.foods.some((f) => f.omega3);
-  const foodList = day.foods.map((f) => `${f.name}(P${f.p})`).join("、");
+  const foodList = day.foods.map((f) => `${f.t ? f.t + " " : ""}${f.name}(P${f.p}${f.c != null ? "/C" + f.c : ""})`).join("、");
   const [y, m, d] = key.split("-").map(Number);
   const dateLabel = fmtJP(new Date(y, m - 1, d));
   const isToday = toKey(new Date()) === key;
@@ -411,7 +412,7 @@ async function fetchBakao(key) {
 - 運動実績：${actLabel(day)}${dayActs(day).filter((a)=>MENU[a]).map((a)=>`／${DAY_LABEL[a]}種目：${(((day.workout||{}).checks)||[]).filter((id)=>MENU[a].some((ex)=>ex.id===id)).length}/${MENU[a].length}`).join("")}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}
 ${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${fmt1(day.weight) || "—"}kg／骨格筋量${day.muscle ?? "—"}kg／体脂肪率${day.fatpct ?? "—"}%（維持目標。骨格筋量の減少傾向にだけ注意を払う）
 ` : ""}${day.wrist ? `- 翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}
-` : ""}- 食べたもの：${foodList}
+` : ""}- 食べたもの（時刻付き。血糖対策は総量でなく質とタイミング：時刻の偏り＝1食への糖質集中や、就寝2:30直前の重い食事があれば軽く触れてよい。時刻なしの品目は詮索しない）：${foodList}
 - 直近7日平均：${weekAvgFor(new Date(y, m - 1, d)) ?? "—"}g
 - 今週の食材ペース（月曜始まり・日曜締め、本日${weekInfo(key).dayN}日目）：鯖缶${pc.saba}/3、生魚${pc.fish}/1、ツナ${pc.tuna}/2、赤身${pc.red}/1、貝${pc.shell}/1、鶏レバー${pc.liver}/1〜2（レバーはビタミンA過剰回避のため週2が上限。週3以上のときだけ「今週はもう十分」と一言添える）（週前半の未達を責めない。週後半で残りが多い場合のみ軽く献立提案してよい）
 
@@ -479,13 +480,13 @@ function resizeImage(file) {
 // ---------- CSV / バックアップ ----------
 function buildCsv() {
   const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
-  const rows = [["日付","区分","品名","たんぱく質g","糖質g","緑黄色野菜","オメガ3","食物繊維","食材カテゴリ","日合計P","日合計C","睡眠h","就寝","起床","安静時心拍","歩数","体調","体重kg","骨格筋量kg","体脂肪率","クレアチン","ビタミンD"].join(",")];
+  const rows = [["日付","時刻","区分","品名","たんぱく質g","糖質g","緑黄色野菜","オメガ3","食物繊維","食材カテゴリ","日合計P","日合計C","睡眠h","就寝","起床","安静時心拍","歩数","体調","体重kg","骨格筋量kg","体脂肪率","クレアチン","ビタミンD"].join(",")];
   for (const k of Object.keys(data).sort()) {
     const dd = data[k];
     if (!dd || !(dd.foods || []).length) continue;
     const dp = sumP(dd), dc = sumC(dd);
     dd.foods.forEach((f, i) => {
-      rows.push([k, q(actLabel(dd)), q(f.name), f.p ?? 0, f.c ?? 0,
+      rows.push([k, (f.t || ""), q(actLabel(dd)), q(f.name), f.p ?? 0, f.c ?? 0,
         f.veg ? 1 : 0, f.omega3 ? 1 : 0, f.fiber ? 1 : 0, f.cat || "",
         i === 0 ? dp : "", i === 0 ? dc : "",
         i === 0 ? (dd.sleep ?? "") : "", i === 0 ? (dd.bedtime ?? "") : "", i === 0 ? (dd.waketime ?? "") : "", i === 0 ? (dd.rhr ?? "") : "", i === 0 ? (dd.steps ?? "") : "", i === 0 ? q(dd.mood ?? "") : '""', i === 0 ? fmt1(dd.weight) : "", i === 0 ? (dd.muscle ?? "") : "", i === 0 ? (dd.fatpct ?? "") : "", i === 0 ? (creatineOn(dd) ? 1 : 0) : "", i === 0 ? (vitdOn(dd) ? 1 : 0) : ""].join(","));
@@ -521,6 +522,28 @@ function importJson(file) {
 }
 
 // ---------- アクション ----------
+// ---- 食事時刻（血糖の質とタイミング方針用）----
+// 優先順位：AIが本文から読んだ時刻 > 写真ファイルの撮影時刻 > 今日を開いていれば現在時刻 > なし（後からタップで修正可）
+const nowHHMM = () => { const d = new Date(); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+const validHHMM = (s) => typeof s === "string" && /^([01]?\d|2[0-3]):[0-5]\d$/.test(s.trim()) ? s.trim() : null;
+function stampFoods(items, key, fileTime) {
+  const isToday = toKey(new Date()) === key;
+  return items.map((f) => {
+    let t = validHHMM(f.t);
+    if (!t && fileTime) t = fileTime;
+    if (!t && isToday) t = nowHHMM();
+    return Object.assign({}, f, { t: t || null });
+  });
+}
+// 写真ファイルの撮影時刻（lastModified）。開いている日と同じ日付のときだけ採用
+function fileHHMM(file, key) {
+  try {
+    const d = new Date(file.lastModified);
+    if (toKey(d) !== key) return null;
+    return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  } catch (e) { return null; }
+}
+
 async function submitText() {
   const t = inputText.trim();
   if (!t || busy) return;
@@ -533,7 +556,7 @@ async function submitText() {
       const key = toKey(cursor);
       const day = getDay(key);
       inputText = "";
-      updateDay(key, { foods: day.foods.concat(items), comment: null });
+      updateDay(key, { foods: day.foods.concat(stampFoods(items, key)), comment: null });
     }
   } catch (e) {
     errMsg = e.message === "NO_KEY" ? "設定タブでAPIキーを登録してください。" : "概算に失敗しました。通信とAPIキーを確認してください。";
@@ -552,7 +575,7 @@ async function onPhotoPicked(file) {
       const key = toKey(cursor);
       const day = getDay(key);
       inputText = "";
-      updateDay(key, { foods: day.foods.concat(items), comment: null });
+      updateDay(key, { foods: day.foods.concat(stampFoods(items, key, fileHHMM(file, key))), comment: null });
     }
   } catch (e) { errMsg = "写真の解析に失敗しました。もう一度試してください。"; }
   finally { busy = false; render(); }
@@ -780,6 +803,7 @@ function renderLog() {
         ? `<div class="emptymsg">まだ記録がありません。写真か一言でどうぞ。</div>`
         : day.foods.map((f, i) => `
           <div class="foodrow">
+            <button class="timechip mono" data-ftime="${i}" title="タップで時刻を修正">${f.t ? esc(f.t) : "--:--"}</button>
             <div class="foodname"><span class="nm">${esc(f.name)}</span><span class="badges">${f.veg?"🥬":""}${f.omega3?"🐟":""}${f.fiber?"🌾":""}</span></div>
             <div class="foodnums">
               <span class="mono" style="color:var(--ice);font-size:15px">${f.p}<small style="color:var(--muted)">P</small></span>
@@ -1073,6 +1097,20 @@ function bindEvents() {
   document.querySelectorAll("[data-del]").forEach((b) =>
     b.addEventListener("click", () => removeFood(Number(b.dataset.del))));
 
+  document.querySelectorAll("[data-ftime]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const i = Number(b.dataset.ftime);
+      const key = toKey(cursor);
+      const day = getDay(key);
+      const cur = (day.foods[i] && day.foods[i].t) || "";
+      const v = prompt("食べた時刻（例 21:30）。空欄で時刻なしに戻します。", cur);
+      if (v === null) return; // キャンセル
+      const t = v.trim() === "" ? null : validHHMM(v);
+      if (v.trim() !== "" && !t) { alert("HH:MM形式で入力してください（例 8:05、21:30）"); return; }
+      const foods = day.foods.map((f, idx) => idx === i ? Object.assign({}, f, { t }) : f);
+      updateDay(key, { foods });
+    }));
+
   const bk = $("[data-bakao]"); if (bk) bk.addEventListener("click", getBakao);
 
   document.querySelectorAll("[data-field]").forEach((inp) =>
@@ -1193,6 +1231,9 @@ document.getElementById("importInput").addEventListener("change", (e) => {
   st.textContent = `
     .daytype5 { flex-wrap: wrap; }
     .daytype5 .dt { flex: 1 1 18%; padding: 9px 0; font-size: 11px; }
+    .timechip { background: none; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 11px; padding: 2px 5px; margin-right: 8px; flex-shrink: 0; cursor: pointer; min-width: 44px; }
+    .foodrow { display: flex; align-items: center; }
+    .foodrow .foodname { flex: 1; min-width: 0; }
     .tiles { display: grid !important; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     .tile { padding: 12px 2px; }
     .tilelabel { font-size: 10px; }
