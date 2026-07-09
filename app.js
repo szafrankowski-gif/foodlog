@@ -15,20 +15,22 @@ const MODEL_PHOTO    = "claude-sonnet-4-6";          // 写真解析：認識精
 const MODEL_BAKAO    = "claude-sonnet-4-6";          // ばかお評価：文章の質重視
 const MODEL_TEST     = MODEL_ESTIMATE;               // キー保存時のテスト用（最安）
 
-const DAY_LABEL = { rest: "休養", trainA: "筋トレA", trainB: "筋トレB", climb: "登攀・柔術", mountain: "山行", aerobic: "有酸素" };
-const DAY_SHORT = { trainA: "筋A", trainB: "筋B", climb: "登", mountain: "山", aerobic: "有" };
+const DAY_LABEL = { rest: "休養", trainA: "筋トレA", trainB: "筋トレB", climb: "登攀", jiujitsu: "柔術", mountain: "山行", aerobic: "有酸素" };
+const DAY_SHORT = { trainA: "筋A", trainB: "筋B", climb: "登", jiujitsu: "柔", mountain: "山", aerobic: "有" };
 
 // ---- v2: 実績ベース判定 ----
-// dayTypeの「宣言」を廃止。その日の実績（筋トレチェック・登攀・山行）から運動日/休養日を自動判定する。
-// 筋トレ(A/B)は「1種目以上チェック」で初めて実績＝運動日。登攀・山行はトグル自体が実績。
+// dayTypeの「宣言」を廃止。その日の実績（筋トレチェック・登攀・柔術・山行）から運動日/休養日を自動判定する。
+// 筋トレ(A/B)は「1種目以上チェック」で初めて実績＝運動日。登攀・柔術・山行はトグル自体が実績。
 // 歩数は参考表示のみ（目標や警告に使わない）。休養日で15,000歩超の日だけ一行提案を出す（目標値は変えない）。
-const ACTS = ["trainA", "trainB", "climb", "mountain", "aerobic"];
+const ACTS = ["trainA", "trainB", "climb", "jiujitsu", "mountain", "aerobic"];
 const STEP_NOTE_MIN = 15000;
 const dayActs = (dd) => (dd && dd.acts) || [];
 const checkedCount = (dd) => ((((dd || {}).workout) || {}).checks || []).length;
+// トグル自体が実績となる身体活動（＝運動日・翌朝の手首チェック対象）：登攀・柔術・山行
+const isPhysicalAct = (a) => a === "climb" || a === "jiujitsu" || a === "mountain";
 // 有酸素(aerobic)は設計上、運動日判定に影響しない（糖質レバーに触らない純粋な実績記録）
 const isActiveDay = (dd) =>
-  dayActs(dd).some((a) => a === "climb" || a === "mountain") ||
+  dayActs(dd).some(isPhysicalAct) ||
   (dayActs(dd).some((a) => a === "trainA" || a === "trainB") && checkedCount(dd) > 0);
 // 今週（月曜始まり）の有酸素実施回数
 function weeklyAerobic(anchorKey) {
@@ -42,8 +44,8 @@ function weeklyAerobic(anchorKey) {
 }
 const actLabel = (dd) => dayActs(dd).length ? dayActs(dd).map((a) => DAY_LABEL[a]).join("+") : "休養";
 const actShort = (dd) => dayActs(dd).map((a) => DAY_SHORT[a] || "").join("");
-// 翌朝の手首チェックを出す前日の実績：筋トレ(MENUあり=trainA/B)に加え、登攀・柔術／山行も対象
-const wristTrig = (dd) => dayActs(dd).some((a) => MENU[a] || a === "climb" || a === "mountain");
+// 翌朝の手首チェックを出す前日の実績：筋トレ(MENUあり=trainA/B)に加え、登攀・柔術・山行も対象
+const wristTrig = (dd) => dayActs(dd).some((a) => MENU[a] || isPhysicalAct(a));
 
 // ---- サプリ確認（優先度高：クレアチン・ビタミンD）----
 // クレアチンは食事記録に「クレアチン」が含まれていれば自動でチェック扱い。タイルのタップで手動上書き可。
@@ -417,7 +419,7 @@ async function fetchBakao(key) {
 
 筋トレ設計：週2（A=ヒンジ・脚／B=引く・押す・体幹）。筋トレ日は目標120gを狙い、トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。翌朝の手首に違和感が出たら一段戻すルール。
 
-運動日/休養日の判定は「実績ベース」：その日に筋トレのチェック・登攀・山行の実績があれば運動日。宣言でなく実績で決まる。
+運動日/休養日の判定は「実績ベース」：その日に筋トレのチェック・登攀・柔術・山行の実績があれば運動日。宣言でなく実績で決まる。
 
 対象日（${dateLabel}・${actLabel(day)}${active ? "＝運動日" : "＝休養日"}）のデータ：
 - たんぱく質：${total}g（目標${target}g）
@@ -766,7 +768,7 @@ function renderLog() {
       <button class="navbtn" data-move="1" ${isToday ? "disabled" : ""}>›</button>
     </div>
 
-    <div class="daytype daytype5">
+    <div class="daytype daytype6">
       ${ACTS.map((t) =>
         `<button class="dt active ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
@@ -1144,7 +1146,7 @@ function renderSettings() {
         <div class="settitle">ℹ️ このアプリについて</div>
         <div class="setdesc">
           foodlog v2 — たんぱく質 基準100g／運動日目標120g方式の食事＋筋トレログ。<br>
-          <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・山行）から自動判定。有酸素（Zone2）トグルは週次実績の記録のみで糖質目標には影響しない（Fitbit等のワークアウト画面スクショを📊に読ませると自動ON）。<br>
+          <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・柔術・山行）から自動判定。有酸素（Zone2）トグルは週次実績の記録のみで糖質目標には影響しない（Fitbit等のワークアウト画面スクショを📊に読ませると自動ON）。<br>
           歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
           筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）。翌朝の手首で前進/一段戻すを判定。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
           糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
@@ -1318,8 +1320,8 @@ document.getElementById("importInput").addEventListener("change", (e) => {
 (() => {
   const st = document.createElement("style");
   st.textContent = `
-    .daytype5 { flex-wrap: wrap; }
-    .daytype5 .dt { flex: 1 1 18%; padding: 9px 0; font-size: 11px; }
+    .daytype6 { flex-wrap: wrap; }
+    .daytype6 .dt { flex: 1 1 28%; padding: 9px 0; font-size: 11px; }
     .timechip { background: none; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 11px; padding: 2px 5px; margin-right: 8px; flex-shrink: 0; cursor: pointer; min-width: 44px; }
     .foodrow { display: flex; align-items: center; }
     .foodrow .foodname { flex: 1; min-width: 0; }
