@@ -42,6 +42,8 @@ function weeklyAerobic(anchorKey) {
 }
 const actLabel = (dd) => dayActs(dd).length ? dayActs(dd).map((a) => DAY_LABEL[a]).join("+") : "休養";
 const actShort = (dd) => dayActs(dd).map((a) => DAY_SHORT[a] || "").join("");
+// 翌朝の手首チェックを出す前日の実績：筋トレ(MENUあり=trainA/B)に加え、登攀・柔術／山行も対象
+const wristTrig = (dd) => dayActs(dd).some((a) => MENU[a] || a === "climb" || a === "mountain");
 
 // ---- サプリ確認（優先度高：クレアチン・ビタミンD）----
 // クレアチンは食事記録に「クレアチン」が含まれていれば自動でチェック扱い。タイルのタップで手動上書き可。
@@ -50,6 +52,11 @@ const creatineOn = (dd) => (dd && dd.creatine != null) ? !!dd.creatine : hasCrea
 const vitdOn = (dd) => !!(dd && dd.vitd);
 // 体重など小数1桁で表示
 const fmt1 = (v) => (v == null || v === "" || isNaN(Number(v))) ? (v ?? "") : Number(v).toFixed(1);
+// 糖質ゲージの色：6割未満=控えめ／6割以上=通常／目標到達=達成色／120%以上=アンバー（数字と色だけで語る）
+function carbBarColor(carbs, limit) {
+  const r = limit > 0 ? carbs / limit : 0;
+  return r >= 1.2 ? "var(--amber)" : r >= 1.0 ? "var(--green)" : r >= 0.6 ? "var(--ice)" : "var(--muted)";
+}
 
 const MENU = {
   trainA: [
@@ -288,6 +295,17 @@ function weekAvgFor(anchor) {
     if (dd && dd.foods.length) { sum += sumP(dd); n++; }
   }
   return n ? Math.round(sum / n) : null;
+}
+// 当日を含む直近7日で体重が記録された日の平均（小数1桁）。記録2日未満は非表示（null）。導出値なのでCSV列は増やさない。
+function weightAvg7(anchor) {
+  let sum = 0, n = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(anchor); d.setDate(d.getDate() - i);
+    const dd = data[toKey(d)];
+    const w = dd && dd.weight;
+    if (w != null && w !== "" && !isNaN(Number(w))) { sum += Number(w); n++; }
+  }
+  return n >= 2 ? (sum / n).toFixed(1) : null;
 }
 
 // ---------- Anthropic API ----------
@@ -726,10 +744,14 @@ function renderLog() {
   const floorPct = (FLOOR / CEILING) * 100;
   const carbLimit = CARB_LIMIT[active ? "active" : "rest"];
   const carbHot = carbs >= carbLimit;
+  const carbColor = carbBarColor(carbs, carbLimit);
+  const carbPct = Math.min(carbLimit > 0 ? carbs / carbLimit : 0, 1) * 100;
+  const carbDiff = carbs < carbLimit ? `あと ${carbLimit - carbs}g` : `+${carbs - carbLimit}g`;
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOm = day.foods.some((f) => f.omega3);
   const hasFi = day.foods.some((f) => f.fiber);
   const wavg = weekAvgFor(cursor);
+  const w7 = weightAvg7(cursor);
   const pc = pace7(key);
   const wi = weekInfo(key);
   const wd = ["日","月","火","水","木","金","土"][new Date(key.split("-")[0], key.split("-")[1]-1, key.split("-")[2]).getDay()];
@@ -773,7 +795,7 @@ function renderLog() {
     ${(() => {
       const yd = new Date(cursor); yd.setDate(yd.getDate() - 1);
       const ydd = data[toKey(yd)];
-      if (!ydd || !dayActs(ydd).some((a) => MENU[a])) return "";
+      if (!ydd || !wristTrig(ydd)) return "";
       return `<div class="section" style="padding-top:0;padding-bottom:14px">
         <div class="card" style="padding:12px 14px;border-color:${day.wrist==="ng"?"var(--amber)":"var(--line)"}">
           <div style="font-size:12px;color:var(--muted);margin-bottom:8px">昨日は${actLabel(ydd)}。翌朝の手首は？</div>
@@ -811,12 +833,18 @@ function renderLog() {
       </div>
     </div>
 
-    <div class="card carbcard ${carbHot?"hot":""}">
-      <div>
+    <div class="card carbcard ${carbHot?"hot":""}" style="display:block">
+      <div style="display:flex;align-items:baseline;justify-content:space-between">
         <div style="font-size:12px;color:var(--muted)">糖質（目安 ${carbLimit}g／${active?"運動日":"休養日"}）</div>
-        ${carbHot ? `<div style="font-size:11px;color:var(--amber);margin-top:3px">目安超え。食後の散歩がおすすめ。</div>` : ""}
+        <div><span class="mono" style="font-size:26px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:13px;color:var(--muted)"> g</span></div>
       </div>
-      <div><span class="mono" style="font-size:26px;font-weight:700;color:${carbHot?"var(--amber)":"var(--text)"}">${carbs}</span><span class="mono" style="font-size:13px;color:var(--muted)"> g</span></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+        <div style="flex:1;height:10px;border-radius:6px;background:var(--surface2);overflow:hidden">
+          <div style="height:100%;width:${carbPct}%;background:${carbColor};border-radius:6px;transition:width .5s cubic-bezier(.22,1,.36,1)"></div>
+        </div>
+        <span class="mono" style="flex-shrink:0;font-size:12px;color:var(--muted)">${carbDiff}</span>
+      </div>
+      ${carbHot ? `<div style="font-size:11px;color:var(--amber);margin-top:6px">目安超え。食後の散歩がおすすめ。</div>` : ""}
     </div>
     ${(day.steps != null && day.steps >= STEP_NOTE_MIN && !active) ? `
     <div class="walknote">👣 歩数 ${day.steps.toLocaleString()}歩（参考）。休養日ですが活動量が多い日です。糖質＋40〜50gを目安に補給してOK（目標値は変わりません）。</div>` : ""}
@@ -893,6 +921,7 @@ function renderLog() {
         <span class="ico">⚖️</span>
         <input class="tileinput mono" data-field="weight" inputmode="decimal" placeholder="—" value="${fmt1(day.weight)}">
         <span class="tilelabel">体重 kg</span>
+        ${w7 != null ? `<span class="tilelabel mono" style="font-size:10px">7日平均 ${w7}</span>` : ""}
       </div>
       <button class="tile ${creatineOn(day)?"on":""}" data-supp="creatine" style="cursor:pointer;border:1px solid ${creatineOn(day)?"var(--green)":"var(--line)"}">
         <span class="ico">💊</span>
