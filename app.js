@@ -54,10 +54,11 @@ const creatineOn = (dd) => (dd && dd.creatine != null) ? !!dd.creatine : hasCrea
 const vitdOn = (dd) => !!(dd && dd.vitd);
 // 体重など小数1桁で表示
 const fmt1 = (v) => (v == null || v === "" || isNaN(Number(v))) ? (v ?? "") : Number(v).toFixed(1);
-// 糖質ゲージの色：6割未満=控えめ／6割以上=通常／目標到達=達成色／120%以上=アンバー（数字と色だけで語る）
+// 糖質ゲージの色：未記録=muted／記録あり=通常／目標到達=達成色／120%以上=アンバー（数字と色だけで語る）
+// mutedは「未入力・無効」の意味に限定し、1gでも記録があればice＝進行中（たんぱくゲージと同じ文法）
 function carbBarColor(carbs, limit) {
   const r = limit > 0 ? carbs / limit : 0;
-  return r >= 1.2 ? "var(--amber)" : r >= 1.0 ? "var(--green)" : r >= 0.6 ? "var(--ice)" : "var(--muted)";
+  return r >= 1.2 ? "var(--amber)" : r >= 1.0 ? "var(--green)" : carbs > 0 ? "var(--ice)" : "var(--muted)";
 }
 
 const MENU = {
@@ -711,6 +712,30 @@ function removeFood(i) {
 // ---------- 描画 ----------
 function isWide() { return window.matchMedia("(min-width: 900px)").matches; }
 
+// innerHTML全書き換え方式でもゲージのtransitionを発火させるFLIP。
+// 同じ日の再描画（食事の追加・削除）のときだけ、前回の高さ/幅から新しい値へアニメさせる。
+// 日付移動・タブ切替では動かさない（「今日の増分」だけを動きで伝える）。
+let animPrev = null, animNext = null;
+function applyFillAnim() {
+  const next = animNext; animNext = null;
+  if (!next) return;
+  if (animPrev && animPrev.key === next.key) {
+    const g = $(".gauge .fill");
+    if (g && animPrev.gauge !== next.gauge) {
+      g.style.transition = "none"; g.style.height = animPrev.gauge + "%";
+      g.offsetHeight; // reflowを挟んで旧値を確定させる
+      g.style.transition = ""; g.style.height = next.gauge + "%";
+    }
+    const c = $("[data-carbfill]");
+    if (c && animPrev.carb !== next.carb) {
+      c.style.transition = "none"; c.style.width = animPrev.carb + "%";
+      c.offsetWidth;
+      c.style.transition = ""; c.style.width = next.carb + "%";
+    }
+  }
+  animPrev = next;
+}
+
 function render() {
   const app = $("#app");
   const wide = isWide();
@@ -731,6 +756,7 @@ function render() {
     ${body}
   `;
   bindEvents();
+  applyFillAnim();
 }
 
 function renderLog() {
@@ -741,14 +767,16 @@ function renderLog() {
   const target = active ? CEILING : FLOOR;
   const isToday = toKey(new Date()) === key;
   const hitFloor = total >= FLOOR, hitCeil = total >= CEILING;
-  const barColor = hitCeil ? "var(--amber)" : hitFloor ? "var(--green)" : "var(--ice)";
+  // 120g到達もgreen（amberは注意・境界系に一本化。「120gは超えても問題ない」思想と色を揃え、到達は✓で伝える）
+  const barColor = hitFloor ? "var(--green)" : "var(--ice)";
   const pct = Math.min(total / CEILING, 1) * 100;
   const floorPct = (FLOOR / CEILING) * 100;
   const carbLimit = CARB_LIMIT[active ? "active" : "rest"];
-  const carbHot = carbs >= carbLimit;
+  const carbHot = carbs >= carbLimit * 1.2; // 超過表示はバー色(carbBarColor)と同じ120%発火。100〜119%は達成扱い
   const carbColor = carbBarColor(carbs, carbLimit);
   const carbPct = Math.min(carbLimit > 0 ? carbs / carbLimit : 0, 1) * 100;
   const carbDiff = carbs < carbLimit ? `あと ${carbLimit - carbs}g` : `+${carbs - carbLimit}g`;
+  animNext = { key, gauge: pct, carb: carbPct }; // FLIP用に今回の描画値を記録
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOm = day.foods.some((f) => f.omega3);
   const hasFi = day.foods.some((f) => f.fiber);
@@ -770,7 +798,7 @@ function renderLog() {
 
     <div class="daytype daytype6">
       ${ACTS.map((t) =>
-        `<button class="dt active ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
+        `<button class="dt ${t==="aerobic"?"aero":"active"} ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
     <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日 · 目標120g／糖質330g":"休養日 · 基準100g／糖質250g"}</b>${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日になります）" : ""}<br>今週の有酸素 <b class="mono">${weeklyAerobic(key)}</b>/1〜2${day.acts.includes("aerobic") ? "（有酸素は糖質目標に影響しません）" : ""}</div>
 
@@ -781,7 +809,7 @@ function renderLog() {
         ${MENU[a].map((ex) => {
           const on = ((day.workout && day.workout.checks) || []).includes(ex.id);
           return `<div class="pacerow" data-ex="${ex.id}" style="cursor:pointer">
-            <span class="box" style="width:18px;height:18px;border-radius:5px;border:1.5px solid var(--green);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;${on?"background:var(--green);color:var(--bg)":""}">${on?"✓":""}</span>
+            <span class="box lg ${on?"on":""}">${on?"✓":""}</span>
             <span style="font-size:14px;flex:1;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</span>
             <span style="font-size:11px;color:var(--muted);flex-shrink:0" class="mono">${ex.spec}</span>
           </div>`;
@@ -813,7 +841,7 @@ function renderLog() {
 
     <div class="gaugewrap">
       <div class="gauge">
-        <div class="tube"><div class="fill" style="height:${pct}%;background:linear-gradient(180deg,${barColor},${barColor})"></div></div>
+        <div class="tube"><div class="fill" style="height:${pct}%;background:${barColor}"></div></div>
         <div class="floorline" style="bottom:${floorPct}%"></div>
         <div class="ceilline"></div>
       </div>
@@ -822,28 +850,26 @@ function renderLog() {
         <div><span class="gnum mono" style="color:${barColor}">${total}</span><span class="gunit mono"> g</span></div>
         <div class="gtarget">今日の目標 ${target}g（${actLabel(day)}）</div>
         <div class="statusrow">
-          <span class="box" style="border-color:var(--green);${hitFloor?"background:var(--green);color:var(--bg)":""}">${hitFloor?"✓":""}</span>
+          <span class="box ${hitFloor?"on":""}">${hitFloor?"✓":""}</span>
           <span>基準 100g</span>
           <span class="detail mono" style="color:${hitFloor?"var(--green)":"var(--muted)"}">${hitFloor?"到達 · 合格":`あと ${FLOOR-total}g`}</span>
         </div>
         <div class="statusrow" style="opacity:${active?1:.5}">
-          <span class="box" style="border-color:var(--amber);${hitCeil?"background:var(--amber);color:var(--bg)":""}">${hitCeil?"✓":""}</span>
+          <span class="box ${hitCeil?"on":""}">${hitCeil?"✓":""}</span>
           <span>運動日目標 120g</span>
-          <span class="detail mono" style="color:${hitCeil?"var(--amber)":"var(--muted)"}">${hitCeil?"到達":`あと ${CEILING-total}g`}</span>
+          <span class="detail mono" style="color:${hitCeil?"var(--green)":"var(--muted)"}">${hitCeil?"到達":`あと ${CEILING-total}g`}</span>
         </div>
         ${wavg != null ? `<div class="weekavg">直近7日平均　<span class="mono" style="color:var(--text);font-size:14px">${wavg}g</span></div>` : ""}
       </div>
     </div>
 
-    <div class="card carbcard ${carbHot?"hot":""}" style="display:block">
+    <div class="card carbcard ${carbHot?"hot":""}">
       <div style="display:flex;align-items:baseline;justify-content:space-between">
         <div style="font-size:12px;color:var(--muted)">糖質（目安 ${carbLimit}g／${active?"運動日":"休養日"}）</div>
         <div><span class="mono" style="font-size:26px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:13px;color:var(--muted)"> g</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-        <div style="flex:1;height:10px;border-radius:6px;background:var(--surface2);overflow:hidden">
-          <div style="height:100%;width:${carbPct}%;background:${carbColor};border-radius:6px;transition:width .5s cubic-bezier(.22,1,.36,1)"></div>
-        </div>
+        <div class="hbar"><div class="fill" data-carbfill style="width:${carbPct}%;background:${carbColor}"></div></div>
         <span class="mono" style="flex-shrink:0;font-size:12px;color:var(--muted)">${carbDiff}</span>
       </div>
       ${carbHot ? `<div style="font-size:11px;color:var(--amber);margin-top:6px">目安超え。食後の散歩がおすすめ。</div>` : ""}
@@ -923,16 +949,16 @@ function renderLog() {
         <span class="ico">⚖️</span>
         <input class="tileinput mono" data-field="weight" inputmode="decimal" placeholder="—" value="${fmt1(day.weight)}">
         <span class="tilelabel">体重 kg</span>
-        ${w7 != null ? `<span class="tilelabel mono" style="font-size:10px">7日平均 ${w7}</span>` : ""}
+        ${w7 != null ? `<span class="tilelabel mono">7日平均 ${w7}</span>` : ""}
       </div>
-      <button class="tile ${creatineOn(day)?"on":""}" data-supp="creatine" style="cursor:pointer;border:1px solid ${creatineOn(day)?"var(--green)":"var(--line)"}">
+      <button class="tile ${creatineOn(day)?"on":""}" data-supp="creatine">
         <span class="ico">💊</span>
-        <span class="mono" style="font-size:15px;font-weight:700;color:${creatineOn(day)?"var(--green)":"var(--muted)"}">${creatineOn(day)?"✓":"—"}</span>
+        <span class="mono" style="font-size:15px;font-weight:900;color:${creatineOn(day)?"var(--green)":"var(--muted)"}">${creatineOn(day)?"✓":"—"}</span>
         <span class="tilelabel">クレアチン</span>
       </button>
-      <button class="tile ${vitdOn(day)?"on":""}" data-supp="vitd" style="cursor:pointer;border:1px solid ${vitdOn(day)?"var(--green)":"var(--line)"}">
+      <button class="tile ${vitdOn(day)?"on":""}" data-supp="vitd">
         <span class="ico">☀️</span>
-        <span class="mono" style="font-size:15px;font-weight:700;color:${vitdOn(day)?"var(--green)":"var(--muted)"}">${vitdOn(day)?"✓":"—"}</span>
+        <span class="mono" style="font-size:15px;font-weight:900;color:${vitdOn(day)?"var(--green)":"var(--muted)"}">${vitdOn(day)?"✓":"—"}</span>
         <span class="tilelabel">ビタミンD</span>
       </button>
     </div>
@@ -1022,7 +1048,7 @@ function renderReview() {
             <span class="daydate mono">${x.label}</span>
             ${x.badge?`<span class="daybadge">${x.badge}</span>`:""}
             <span class="dayicons">${x.veg?"🥬":""}${x.omega3?"🐟":""}${x.fiber?"🌾":""}${x.creatine?"💊":""}${x.steps!=null?`<span class="mono" style="font-size:10px;color:var(--muted)"> ${(x.steps/1000).toFixed(1)}k歩</span>`:""}</span>
-            <span class="dayp mono" style="color:${!x.has?"var(--muted)":x.p>=CEILING?"var(--amber)":x.p>=FLOOR?"var(--green)":"var(--ice)"}">${x.has?x.p+"g":"—"}</span>
+            <span class="dayp mono" style="color:${!x.has?"var(--muted)":x.p>=FLOOR?"var(--green)":"var(--ice)"}">${x.has?x.p+"g":"—"}</span>
           </div>`).join("")}
       </div>
     </div>
@@ -1031,21 +1057,22 @@ function renderReview() {
 
 function proteinChart(days) {
   const W = 448, H = 180, padL = 30, padB = 18, padT = 8;
-  const maxY = 140;
+  // 140g超の日を無言でクリップしない（スケールを実測に追従させ、頑張った日の差分を残す）
+  const maxY = Math.max(140, ...days.map((d) => d.has ? d.p : 0));
   const iw = (W - padL) / days.length;
   const y = (v) => padT + (H - padT - padB) * (1 - Math.min(v, maxY) / maxY);
   const bars = days.map((d, i) => {
     const x = padL + i * iw + iw * 0.15;
     const bw = iw * 0.7;
     const v = d.has ? d.p : 0;
-    const color = v >= CEILING ? "#F0B458" : v >= FLOOR ? "#7FD68B" : v > 0 ? "#5FC9DE" : "#22303C";
+    const color = v >= FLOOR ? "#7FD68B" : v > 0 ? "#5FC9DE" : "#22303C"; // 120g超もgreen（amberは注意系に一本化）
     const h = (H - padT - padB) * (Math.min(v, maxY) / maxY);
     return `<rect x="${x.toFixed(1)}" y="${(H - padB - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="2" fill="${color}"/>`;
   }).join("");
   const step = days.length > 20 ? 5 : days.length > 10 ? 2 : 1;
   const labels = days.map((d, i) => i % step === 0
     ? `<text x="${(padL + i * iw + iw/2).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${d.label}</text>` : "").join("");
-  const axis = [0, 50, 100, 140].map((v) =>
+  const axis = [0, 50, 100, maxY].map((v) =>
     `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v}</text>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
     ${axis}${bars}
@@ -1056,17 +1083,18 @@ function proteinChart(days) {
 }
 
 function weightChart(days) {
-  const pts = days.filter((d) => d.weight != null);
+  // x座標は「記録日の並び順」でなく実際の日付位置に置く（欠測期間の傾きを歪めない）
+  const pts = days.map((d, di) => ({ ...d, di })).filter((d) => d.weight != null);
   if (pts.length < 2) return `<div style="font-size:12px;color:var(--muted);padding:14px 0">体重の記録が2日分たまるとグラフが出ます。</div>`;
   const W = 448, H = 150, padL = 34, padB = 18, padT = 10;
   const ws = pts.map((p) => p.weight);
   const lo = Math.min(...ws) - 1, hi = Math.max(...ws) + 1;
-  const x = (i) => padL + (W - padL - 8) * (pts.length === 1 ? 0.5 : i / (pts.length - 1));
+  const x = (p) => padL + (W - padL - 8) * (days.length === 1 ? 0.5 : p.di / (days.length - 1));
   const y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo));
-  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.weight).toFixed(1)}`).join(" ");
-  const dots = pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.weight).toFixed(1)}" r="3" fill="#5FC9DE"/>`).join("");
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p.weight).toFixed(1)}`).join(" ");
+  const dots = pts.map((p) => `<circle cx="${x(p).toFixed(1)}" cy="${y(p.weight).toFixed(1)}" r="3" fill="#5FC9DE"/>`).join("");
   const labels = pts.map((p, i) => (pts.length <= 8 || i === 0 || i === pts.length - 1)
-    ? `<text x="${x(i).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
+    ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
   const axis = [lo, (lo+hi)/2, hi].map((v) =>
     `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
@@ -1075,17 +1103,18 @@ function weightChart(days) {
 }
 
 function compChart(days, field, color, unit) {
-  const pts = days.filter((d) => d[field] != null);
+  // weightChartと同じく実際の日付位置でx座標を取る
+  const pts = days.map((d, di) => ({ ...d, di })).filter((d) => d[field] != null);
   if (pts.length < 2) return `<div style="font-size:12px;color:var(--muted);padding:14px 0">記録が2回分たまるとグラフが出ます（${unit}）。</div>`;
   const W = 448, H = 140, padL = 36, padB = 18, padT = 10;
   const vs = pts.map((p) => p[field]);
   const lo = Math.min(...vs) - 0.5, hi = Math.max(...vs) + 0.5;
-  const x = (i) => padL + (W - padL - 8) * (pts.length === 1 ? 0.5 : i / (pts.length - 1));
+  const x = (p) => padL + (W - padL - 8) * (days.length === 1 ? 0.5 : p.di / (days.length - 1));
   const y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo));
-  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[field]).toFixed(1)}`).join(" ");
-  const dots = pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p[field]).toFixed(1)}" r="3" fill="${color}"/>`).join("");
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p[field]).toFixed(1)}`).join(" ");
+  const dots = pts.map((p) => `<circle cx="${x(p).toFixed(1)}" cy="${y(p[field]).toFixed(1)}" r="3" fill="${color}"/>`).join("");
   const labels = pts.map((p, i) => (pts.length <= 8 || i === 0 || i === pts.length - 1)
-    ? `<text x="${x(i).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
+    ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
   const axis = [lo, (lo+hi)/2, hi].map((v) =>
     `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
@@ -1316,21 +1345,7 @@ document.getElementById("importInput").addEventListener("change", (e) => {
   if (f) importJson(f);
 });
 
-// 追加スタイル（5択トグル・4タイル対応）
-(() => {
-  const st = document.createElement("style");
-  st.textContent = `
-    .daytype6 { flex-wrap: wrap; }
-    .daytype6 .dt { flex: 1 1 28%; padding: 9px 0; font-size: 11px; }
-    .timechip { background: none; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 11px; padding: 2px 5px; margin-right: 8px; flex-shrink: 0; cursor: pointer; min-width: 44px; }
-    .foodrow { display: flex; align-items: center; }
-    .foodrow .foodname { flex: 1; min-width: 0; }
-    .tiles { display: grid !important; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-    .tile { padding: 12px 2px; }
-    .tilelabel { font-size: 10px; }
-  `;
-  document.head.appendChild(st);
-})();
+// スタイルはすべて index.html の <style> に集約（動的<style>追加は上書き事故のもとなので廃止）
 
 // Service Worker登録（オフライン起動用）
 if ("serviceWorker" in navigator) {
