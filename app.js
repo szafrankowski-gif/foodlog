@@ -535,6 +535,65 @@ function stampFoods(items, key, fileTime) {
     return Object.assign({}, f, { t: t || null });
   });
 }
+// 写真の撮影時刻：EXIF(DateTimeOriginal)を直接読む。取れなければlastModifiedで代用。
+// Androidのフォトピッカー等はlastModifiedを「選択時刻」に書き換えることがあるため、EXIFが正。
+function exifDateTime(buf) {
+  try {
+    const v = new DataView(buf);
+    if (v.getUint16(0) !== 0xFFD8) return null; // not JPEG
+    let o = 2;
+    while (o + 4 < v.byteLength) {
+      if (v.getUint8(o) !== 0xFF) break;
+      const marker = v.getUint8(o + 1);
+      const size = v.getUint16(o + 2);
+      if (marker === 0xE1) { // APP1 (Exif)
+        const s = o + 4;
+        if (v.getUint32(s) === 0x45786966) { // "Exif"
+          const t = s + 6; // TIFFヘッダ起点
+          const le = v.getUint16(t) === 0x4949; // バイト順
+          const u16 = (p) => v.getUint16(p, le), u32 = (p) => v.getUint32(p, le);
+          const readIfd = (ofs, want) => {
+            const n = u16(t + ofs); const found = {};
+            for (let i = 0; i < n; i++) {
+              const e = t + ofs + 2 + i * 12;
+              const tag = u16(e);
+              if (want.includes(tag)) found[tag] = { type: u16(e + 2), count: u32(e + 4), val: u32(e + 8), at: e + 8 };
+            }
+            return { found, next: u32(t + ofs + 2 + n * 12) };
+          };
+          const ifd0 = readIfd(u32(t + 4), [0x8769, 0x0132]); // ExifIFDポインタ, DateTime
+          let dtEntry = null;
+          if (ifd0.found[0x8769]) {
+            const exifIfd = readIfd(ifd0.found[0x8769].val, [0x9003]); // DateTimeOriginal
+            dtEntry = exifIfd.found[0x9003] || null;
+          }
+          if (!dtEntry) dtEntry = ifd0.found[0x0132] || null;
+          if (dtEntry && dtEntry.type === 2 && dtEntry.count >= 19) {
+            const p = t + dtEntry.val;
+            let str = "";
+            for (let i = 0; i < 19; i++) str += String.fromCharCode(v.getUint8(p + i));
+            // "YYYY:MM:DD HH:MM:SS"
+            const m = str.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2})/);
+            if (m) return { key: `${m[1]}-${m[2]}-${m[3]}`, hhmm: `${Number(m[4])}:${m[5]}` };
+          }
+        }
+      }
+      if (marker === 0xDA) break; // 画像データ開始
+      o += 2 + size;
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function photoHHMM(file, key) {
+  try {
+    const head = await file.slice(0, 128 * 1024).arrayBuffer(); // EXIFは先頭にある
+    const ex = exifDateTime(head);
+    if (ex) return ex.key === key ? ex.hhmm : null; // 別の日の写真は採用しない
+  } catch (e) {}
+  return fileHHMM(file, key); // EXIFなし→lastModifiedで代用
+}
+
 // 写真ファイルの撮影時刻（lastModified）。開いている日と同じ日付のときだけ採用
 function fileHHMM(file, key) {
   try {
@@ -575,7 +634,7 @@ async function onPhotoPicked(file) {
       const key = toKey(cursor);
       const day = getDay(key);
       inputText = "";
-      updateDay(key, { foods: day.foods.concat(stampFoods(items, key, fileHHMM(file, key))), comment: null });
+      updateDay(key, { foods: day.foods.concat(stampFoods(items, key, await photoHHMM(file, key))), comment: null });
     }
   } catch (e) { errMsg = "写真の解析に失敗しました。もう一度試してください。"; }
   finally { busy = false; render(); }
