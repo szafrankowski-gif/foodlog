@@ -1,4 +1,4 @@
-/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示） */
+/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示）｜更新: 2026-07-09 */
 "use strict";
 
 const FLOOR = 100, CEILING = 120;
