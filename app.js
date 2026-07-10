@@ -909,10 +909,8 @@ function renderLog() {
 
     <div class="pills">
       <div class="pill ${hasVeg?"on":""}"><span class="ico">🥬</span>緑黄色野菜</div>
-      <div class="pill ${hasOm?"on":""}"><span class="ico">🐟</span>魚 オメガ3</div>
+      <div class="pill ${hasOm?"on":""}"><span class="ico">🐟</span>オメガ3</div>
       <div class="pill ${hasFi?"on":""}"><span class="ico">🌾</span>食物繊維</div>
-    </div>
-    <div class="pills" style="padding-top:8px">
       <button class="pill ${creatineOn(day)?"on":""}" data-supp="creatine"><span class="ico">💊</span>クレアチン</button>
       <button class="pill ${vitdOn(day)?"on":""}" data-supp="vitd"><span class="ico">☀️</span>ビタミンD</button>
     </div>
