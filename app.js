@@ -1,4 +1,4 @@
-/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示）｜更新: 2026-07-09 */
+/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示）｜更新: 2026-07-10 */
 "use strict";
 
 const FLOOR = 100, CEILING = 120;
@@ -141,6 +141,7 @@ let range = 14;
 let busy = false, commentBusy = false;
 let errMsg = "", setMsg = "";
 let inputText = "";
+let menuOpen = false, paceOpen = false; // 折りたたみ状態（メモリのみ・リロードで閉じる）
 
 // ---------- ユーティリティ ----------
 const $ = (sel) => document.querySelector(sel);
@@ -800,27 +801,7 @@ function renderLog() {
       ${ACTS.map((t) =>
         `<button class="dt ${t==="aerobic"?"aero":"active"} ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
-    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日 · 目標120g／糖質330g":"休養日 · 基準100g／糖質250g"}</b>${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日になります）" : ""}<br>今週の有酸素 <b class="mono">${weeklyAerobic(key)}</b>/1〜2${day.acts.includes("aerobic") ? "（有酸素は糖質目標に影響しません）" : ""}</div>
-
-    ${dayActs(day).filter((a) => MENU[a]).map((a) => `
-    <div class="section" style="padding-top:0;padding-bottom:14px">
-      <div class="seclabel">今日のメニュー（${DAY_LABEL[a]}）</div>
-      <div class="card pacebox">
-        ${MENU[a].map((ex) => {
-          const on = ((day.workout && day.workout.checks) || []).includes(ex.id);
-          return `<div class="pacerow" data-ex="${ex.id}" style="cursor:pointer">
-            <span class="box lg ${on?"on":""}">${on?"✓":""}</span>
-            <span style="font-size:14px;flex:1;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</span>
-            <span style="font-size:11px;color:var(--muted);flex-shrink:0" class="mono">${ex.spec}</span>
-          </div>`;
-        }).join("")}
-      </div>
-    </div>`).join("")}
-    ${dayActs(day).some((a) => MENU[a]) ? `
-    <div class="section" style="padding-top:0;padding-bottom:14px;margin-top:-8px">
-      <input class="setinput" data-wnote placeholder="メモ（例：RDL 18kgに上げた／スイング違和感で中止）"
-        value="${esc((day.workout && day.workout.note) || "")}" style="font-size:13px">
-    </div>` : ""}
+    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日":"休養日"}</b> · 今週の有酸素 <b class="mono">${weeklyAerobic(key)}</b>/1〜2${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日）" : ""}</div>
 
     ${(() => {
       const yd = new Date(cursor); yd.setDate(yd.getDate() - 1);
@@ -838,6 +819,30 @@ function renderLog() {
         </div>
       </div>`;
     })()}
+
+    ${dayActs(day).filter((a) => MENU[a]).map((a) => {
+      const checks = (day.workout && day.workout.checks) || [];
+      const done = MENU[a].filter((ex) => checks.includes(ex.id)).length;
+      return `
+    <div class="section" style="padding-top:0;padding-bottom:${menuOpen ? 14 : 10}px">
+      <button class="seclabel fold" data-menutoggle><span class="foldlabel">今日のメニュー（${DAY_LABEL[a]}）</span><span class="foldsum mono" style="color:${done === MENU[a].length ? "var(--green)" : "var(--muted)"}">${done}/${MENU[a].length}</span><span class="chev">${menuOpen ? "▾" : "▸"}</span></button>
+      ${menuOpen ? `<div class="card pacebox">
+        ${MENU[a].map((ex) => {
+          const on = checks.includes(ex.id);
+          return `<div class="pacerow" data-ex="${ex.id}" style="cursor:pointer">
+            <span class="box lg ${on?"on":""}">${on?"✓":""}</span>
+            <span style="font-size:14px;flex:1;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</span>
+            <span style="font-size:11px;color:var(--muted);flex-shrink:0" class="mono">${ex.spec}</span>
+          </div>`;
+        }).join("")}
+      </div>` : ""}
+    </div>`;
+    }).join("")}
+    ${menuOpen && dayActs(day).some((a) => MENU[a]) ? `
+    <div class="section" style="padding-top:0;padding-bottom:14px;margin-top:-8px">
+      <input class="setinput" data-wnote placeholder="メモ（例：RDL 18kgに上げた／スイング違和感で中止）"
+        value="${esc((day.workout && day.workout.note) || "")}" style="font-size:13px">
+    </div>` : ""}
 
     <div class="gaugewrap">
       <div class="gauge">
@@ -883,28 +888,6 @@ function renderLog() {
       <div class="pill ${hasFi?"on":""}"><span class="ico">🌾</span>食物繊維</div>
     </div>
 
-    <div class="section">
-      <div class="seclabel">今週の食材ペース（月〜日・${wd}曜＝${wi.dayN}日目）</div>
-      <div class="card pacebox">
-        ${PACE.map((row) => {
-          const n = pc[row.key];
-          const hi = row.max || row.target;
-          const met = n >= row.target && n <= hi;
-          const over = n > hi;
-          const dots = Array.from({ length: Math.max(hi, n) }).map((_, i) =>
-            `<span class="dot" style="${i < n ? `background:${over && i >= hi ? "var(--amber)" : row.color};border-color:${over && i >= hi ? "var(--amber)" : row.color}` : i < row.target ? `border-color:${row.color}` : "opacity:.4"}"></span>`).join("");
-          const range = row.max ? `${row.target}〜${row.max}` : `${row.target}`;
-          const stat = over ? `${n}/${range}・今週は十分` : met ? `達成 ${n}/${range}` : `${n}/${range}・あと${row.target - n}`;
-          return `<div class="pacerow">
-            <span class="pacename">${row.label}</span>
-            <div class="dots">${dots}</div>
-            <span class="pacestat mono ${met?"met":""}" ${over?`style="color:var(--amber)"`:""}>${stat}</span>
-          </div>`;
-        }).join("")}
-      </div>
-      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>
-    </div>
-
     <div class="inputrow">
       <button class="iconbtn" data-photo ${busy?"disabled":""}>📷</button>
       <textarea class="mealinput" rows="2" placeholder="食べたものを書く／写真だけでもOK" ${busy?"disabled":""}>${esc(inputText)}</textarea>
@@ -938,6 +921,32 @@ function renderLog() {
           </div>` : `
           <button class="bakaobtn" data-bakao ${commentBusy?"disabled":""}>${commentBusy?'<span class="spin">◐</span> ばかおが見ています…':"💬 ばかおの一言評価をもらう"}</button>`}
       </div>` : ""}
+
+    ${(() => {
+      const remain = PACE.filter((row) => pc[row.key] < row.target).map((row) => `${row.label}${row.target - pc[row.key]}`);
+      const sum = remain.length ? `あと：${remain.join("・")}` : "今週分クリア ✓";
+      return `<div class="section" style="padding-bottom:${paceOpen ? 0 : 6}px">
+      <button class="seclabel fold" data-pacetoggle><span class="foldlabel">今週の食材ペース${paceOpen ? `（月〜日・${wd}曜＝${wi.dayN}日目）` : ""}</span>${paceOpen ? "" : `<span class="foldsum" style="color:${remain.length ? "var(--muted)" : "var(--green)"}">${sum}</span>`}<span class="chev">${paceOpen ? "▾" : "▸"}</span></button>
+      ${paceOpen ? `<div class="card pacebox">
+        ${PACE.map((row) => {
+          const n = pc[row.key];
+          const hi = row.max || row.target;
+          const met = n >= row.target && n <= hi;
+          const over = n > hi;
+          const dots = Array.from({ length: Math.max(hi, n) }).map((_, i) =>
+            `<span class="dot" style="${i < n ? `background:${over && i >= hi ? "var(--amber)" : row.color};border-color:${over && i >= hi ? "var(--amber)" : row.color}` : i < row.target ? `border-color:${row.color}` : "opacity:.4"}"></span>`).join("");
+          const range = row.max ? `${row.target}〜${row.max}` : `${row.target}`;
+          const stat = over ? `${n}/${range}・今週は十分` : met ? `達成 ${n}/${range}` : `${n}/${range}・あと${row.target - n}`;
+          return `<div class="pacerow">
+            <span class="pacename">${row.label}</span>
+            <div class="dots">${dots}</div>
+            <span class="pacestat mono ${met?"met":""}" ${over?`style="color:var(--amber)"`:""}>${stat}</span>
+          </div>`;
+        }).join("")}
+      </div>
+      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>` : ""}
+    </div>`;
+    })()}
 
     <div class="tiles">
       <div class="tile">
@@ -1202,8 +1211,13 @@ function bindEvents() {
       const a = b.dataset.act;
       const cur = dayActs(day);
       const acts = cur.includes(a) ? cur.filter((x) => x !== a) : cur.concat(a);
+      if (!cur.includes(a) && MENU[a]) menuOpen = true; // トレ日ONで今日のメニューを自動展開
       updateDay(key, { acts, comment: null });
     }));
+
+  document.querySelectorAll("[data-menutoggle]").forEach((b) =>
+    b.addEventListener("click", () => { menuOpen = !menuOpen; render(); }));
+  const pt = $("[data-pacetoggle]"); if (pt) pt.addEventListener("click", () => { paceOpen = !paceOpen; render(); });
 
   const ta = $(".mealinput");
   if (ta) {
