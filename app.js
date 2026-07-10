@@ -167,7 +167,16 @@ function load() {
       dd.acts = (dd.dayType && dd.dayType !== "rest") ? [dd.dayType] : [];
     }
   }
+  migrateLiverCat();
   save();
+}
+// parseItemsの許可リスト漏れでcat:"liver"が保存されなかった過去データを品名から復元（冪等）
+function migrateLiverCat() {
+  for (const k of Object.keys(data)) {
+    const dd = data[k];
+    if (!dd || !Array.isArray(dd.foods)) continue;
+    dd.foods.forEach((f) => { if (f && !f.cat && /レバー/.test(f.name || "")) f.cat = "liver"; });
+  }
 }
 function save() {
   try { localStorage.setItem(DATA_KEY, JSON.stringify(data)); } catch (e) {}
@@ -206,6 +215,7 @@ function mergeRemote(remote) {
     if (!r) continue;
     if (!l || (Number(r._m) || 0) > (Number(l._m) || 0)) data[k] = r;
   }
+  migrateLiverCat(); // 未移行端末からpullした日も復元する
 }
 
 async function syncPull() {
@@ -350,7 +360,7 @@ function parseItems(raw) {
     if (x.veg) it.veg = true;
     if (x.omega3) it.omega3 = true;
     if (x.fiber) it.fiber = true;
-    if (["saba", "fish", "tuna", "red", "shell"].includes(x.cat)) it.cat = x.cat;
+    if (["saba", "fish", "tuna", "red", "shell", "liver"].includes(x.cat)) it.cat = x.cat;
     return it;
   });
 }
