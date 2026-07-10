@@ -51,7 +51,8 @@ const wristTrig = (dd) => dayActs(dd).some((a) => MENU[a] || isPhysicalAct(a));
 // クレアチンは食事記録に「クレアチン」が含まれていれば自動でチェック扱い。タイルのタップで手動上書き可。
 const hasCreatineFood = (dd) => (((dd || {}).foods) || []).some((f) => /クレアチン/.test(f.name || ""));
 const creatineOn = (dd) => (dd && dd.creatine != null) ? !!dd.creatine : hasCreatineFood(dd);
-const vitdOn = (dd) => !!(dd && dd.vitd);
+const hasVitdFood = (dd) => (((dd || {}).foods) || []).some((f) => /ビタミン[dDＤ]/.test(f.name || ""));
+const vitdOn = (dd) => (dd && dd.vitd != null) ? !!dd.vitd : hasVitdFood(dd);
 // 体重など小数1桁で表示
 const fmt1 = (v) => (v == null || v === "" || isNaN(Number(v))) ? (v ?? "") : Number(v).toFixed(1);
 // 糖質ゲージの色：未記録=muted／記録あり=通常／目標到達=達成色／120%以上=アンバー（数字と色だけで語る）
@@ -911,6 +912,16 @@ function renderLog() {
       <div class="pill ${hasOm?"on":""}"><span class="ico">🐟</span>魚 オメガ3</div>
       <div class="pill ${hasFi?"on":""}"><span class="ico">🌾</span>食物繊維</div>
     </div>
+    <div class="pills" style="padding-top:8px">
+      <button class="pill ${creatineOn(day)?"on":""}" data-supp="creatine"><span class="ico">💊</span>クレアチン</button>
+      <button class="pill ${vitdOn(day)?"on":""}" data-supp="vitd"><span class="ico">☀️</span>ビタミンD</button>
+    </div>
+    ${(() => {
+      const auto = [];
+      if (day.creatine == null && hasCreatineFood(day)) auto.push("💊クレアチン");
+      if (day.vitd == null && hasVitdFood(day)) auto.push("☀️ビタミンD");
+      return auto.length ? `<div class="walknote">${auto.join("・")} は食事記録から自動チェック済み。</div>` : "";
+    })()}
 
     <div class="inputrow">
       <button class="iconbtn" data-photo ${busy?"disabled":""}>📷</button>
@@ -958,18 +969,7 @@ function renderLog() {
         <span class="tilelabel">体重 kg</span>
         ${w7 != null ? `<span class="tilelabel mono">7日平均 ${w7}</span>` : ""}
       </div>
-      <button class="tile ${creatineOn(day)?"on":""}" data-supp="creatine">
-        <span class="ico">💊</span>
-        <span class="mono" style="font-size:17px;font-weight:900;color:${creatineOn(day)?"var(--green)":"var(--muted)"}">${creatineOn(day)?"✓":"—"}</span>
-        <span class="tilelabel">クレアチン</span>
-      </button>
-      <button class="tile ${vitdOn(day)?"on":""}" data-supp="vitd">
-        <span class="ico">☀️</span>
-        <span class="mono" style="font-size:17px;font-weight:900;color:${vitdOn(day)?"var(--green)":"var(--muted)"}">${vitdOn(day)?"✓":"—"}</span>
-        <span class="tilelabel">ビタミンD</span>
-      </button>
     </div>
-    ${(day.creatine == null && hasCreatineFood(day)) ? `<div class="walknote">💊 食事記録の「クレアチン」から自動チェック済み。</div>` : ""}
 
     <div class="section" style="padding-bottom:8px">
       <div class="seclabel">測定データ（InBody・Fitbit等のスクショ）</div>
