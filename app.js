@@ -819,13 +819,13 @@ function renderLog() {
       if (!ydd || !wristTrig(ydd)) return "";
       return `<div class="section" style="padding-top:0;padding-bottom:14px">
         <div class="card" style="padding:12px 14px;border-color:${day.wrist==="ng"?"var(--amber)":"var(--line)"}">
-          <div style="font-size:13px;color:var(--muted);margin-bottom:8px">昨日は${actLabel(ydd)}。翌朝の手首は？</div>
+          <div style="font-size:14px;color:var(--muted);margin-bottom:8px">昨日は${actLabel(ydd)}。翌朝の手首は？</div>
           <div style="display:flex;gap:8px">
             <button class="dt ${day.wrist==="ok"?"rest on":"rest"}" data-wrist="ok" style="padding:8px 0">違和感なし</button>
             <button class="dt ${day.wrist==="ng"?"active on":"active"}" data-wrist="ng" style="padding:8px 0">違和感あり</button>
           </div>
-          ${day.wrist==="ng"?`<div style="font-size:12px;color:var(--amber);margin-top:8px">判断基準：一段戻す（重量↓ or テンポ段階↓）。2回続いたら2割減。</div>`:""}
-          ${day.wrist==="ok"?`<div style="font-size:12px;color:var(--green);margin-top:8px">前進OK。テンポ→ポーズ→片側化→回数の順で。</div>`:""}
+          ${day.wrist==="ng"?`<div style="font-size:13px;color:var(--amber);margin-top:8px">判断基準：一段戻す（重量↓ or テンポ段階↓）。2回続いたら2割減。</div>`:""}
+          ${day.wrist==="ok"?`<div style="font-size:13px;color:var(--green);margin-top:8px">前進OK。テンポ→ポーズ→片側化→回数の順で。</div>`:""}
         </div>
       </div>`;
     })()}
@@ -833,14 +833,14 @@ function renderLog() {
     ${(isToday && day.foods.length === 0 && (day.sleep == null || day.weight == null)) ? `
     <div class="section" style="padding-top:0;padding-bottom:14px">
       <div class="card" style="padding:8px 12px;display:flex;align-items:center;gap:8px">
-        <span style="font-size:12px;color:var(--muted);flex-shrink:0">朝の記録</span>
-        <span style="margin-left:auto;font-size:16px">🌙</span>
+        <span style="font-size:13px;color:var(--muted);flex-shrink:0">朝の記録</span>
+        <span style="margin-left:auto;font-size:17px">🌙</span>
         <input class="tileinput mono" data-field="sleep" inputmode="decimal" placeholder="h" value="${day.sleep ?? ""}"
-          style="width:52px;font-size:16px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 2px">
-        <span style="font-size:16px">⚖️</span>
+          style="width:52px;font-size:17px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 2px">
+        <span style="font-size:17px">⚖️</span>
         <input class="tileinput mono" data-field="weight" inputmode="decimal" placeholder="kg" value="${fmt1(day.weight)}"
-          style="width:62px;font-size:16px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 2px">
-        <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:38px;height:38px;font-size:17px" title="測定スクショを読み取る">📊</button>
+          style="width:62px;font-size:17px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 2px">
+        <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:38px;height:38px;font-size:18px" title="測定スクショを読み取る">📊</button>
       </div>
     </div>` : ""}
 
@@ -855,8 +855,8 @@ function renderLog() {
           const on = checks.includes(ex.id);
           return `<div class="pacerow" data-ex="${ex.id}" style="cursor:pointer">
             <span class="box lg ${on?"on":""}">${on?"✓":""}</span>
-            <span style="font-size:15px;flex:1;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</span>
-            <span style="font-size:12px;color:var(--muted);flex-shrink:0" class="mono">${ex.spec}</span>
+            <span style="font-size:16px;flex:1;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</span>
+            <span style="font-size:13px;color:var(--muted);flex-shrink:0" class="mono">${ex.spec}</span>
           </div>`;
         }).join("")}
       </div>` : ""}
@@ -865,7 +865,7 @@ function renderLog() {
     ${menuOpen && dayActs(day).some((a) => MENU[a]) ? `
     <div class="section" style="padding-top:0;padding-bottom:14px;margin-top:-8px">
       <input class="setinput" data-wnote placeholder="メモ（例：RDL 18kgに上げた／スイング違和感で中止）"
-        value="${esc((day.workout && day.workout.note) || "")}" style="font-size:14px">
+        value="${esc((day.workout && day.workout.note) || "")}" style="font-size:15px">
     </div>` : ""}
 
     <div class="gaugewrap">
@@ -888,20 +888,20 @@ function renderLog() {
           <span>運動日目標 120g</span>
           <span class="detail mono" style="color:${hitCeil?"var(--green)":"var(--muted)"}">${hitCeil?"到達":`あと ${CEILING-total}g`}</span>
         </div>
-        ${wavg != null ? `<div class="weekavg">直近7日平均　<span class="mono" style="color:var(--text);font-size:15px">${wavg}g</span></div>` : ""}
+        ${wavg != null ? `<div class="weekavg">直近7日平均　<span class="mono" style="color:var(--text);font-size:16px">${wavg}g</span></div>` : ""}
       </div>
     </div>
 
     <div class="card carbcard ${carbHot?"hot":""}">
       <div style="display:flex;align-items:baseline;justify-content:space-between">
-        <div style="font-size:13px;color:var(--muted)">糖質（目安 ${carbLimit}g／${active?"運動日":"休養日"}）</div>
-        <div><span class="mono" style="font-size:26px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:14px;color:var(--muted)"> g</span></div>
+        <div style="font-size:14px;color:var(--muted)">糖質（目安 ${carbLimit}g／${active?"運動日":"休養日"}）</div>
+        <div><span class="mono" style="font-size:26px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:15px;color:var(--muted)"> g</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
         <div class="hbar"><div class="fill" data-carbfill style="width:${carbPct}%;background:${carbColor}"></div></div>
-        <span class="mono" style="flex-shrink:0;font-size:13px;color:var(--muted)">${carbDiff}</span>
+        <span class="mono" style="flex-shrink:0;font-size:14px;color:var(--muted)">${carbDiff}</span>
       </div>
-      ${carbHot ? `<div style="font-size:12px;color:var(--amber);margin-top:6px">目安超え。食後の散歩がおすすめ。</div>` : ""}
+      ${carbHot ? `<div style="font-size:13px;color:var(--amber);margin-top:6px">目安超え。食後の散歩がおすすめ。</div>` : ""}
     </div>
     ${(day.steps != null && day.steps >= STEP_NOTE_MIN && !active) ? `
     <div class="walknote">👣 歩数 ${day.steps.toLocaleString()}歩（参考）。休養日ですが活動量が多い日です。糖質＋40〜50gを目安に補給してOK（目標値は変わりません）。</div>` : ""}
@@ -928,8 +928,8 @@ function renderLog() {
             <button class="timechip mono" data-ftime="${i}" title="タップで時刻を修正">${f.t ? esc(f.t) : "--:--"}</button>
             <div class="foodname"><span class="nm">${esc(f.name)}</span><span class="badges">${f.veg?"🥬":""}${f.omega3?"🐟":""}${f.fiber?"🌾":""}</span></div>
             <div class="foodnums">
-              <span class="mono" style="color:var(--ice);font-size:16px">${f.p}<small style="color:var(--muted)">P</small></span>
-              <span class="mono" style="color:var(--muted);font-size:14px">${f.c ?? 0}<small>C</small></span>
+              <span class="mono" style="color:var(--ice);font-size:17px">${f.p}<small style="color:var(--muted)">P</small></span>
+              <span class="mono" style="color:var(--muted);font-size:15px">${f.c ?? 0}<small>C</small></span>
               <button class="delbtn" data-del="${i}">🗑</button>
             </div>
           </div>`).join("")}
@@ -960,12 +960,12 @@ function renderLog() {
       </div>
       <button class="tile ${creatineOn(day)?"on":""}" data-supp="creatine">
         <span class="ico">💊</span>
-        <span class="mono" style="font-size:16px;font-weight:900;color:${creatineOn(day)?"var(--green)":"var(--muted)"}">${creatineOn(day)?"✓":"—"}</span>
+        <span class="mono" style="font-size:17px;font-weight:900;color:${creatineOn(day)?"var(--green)":"var(--muted)"}">${creatineOn(day)?"✓":"—"}</span>
         <span class="tilelabel">クレアチン</span>
       </button>
       <button class="tile ${vitdOn(day)?"on":""}" data-supp="vitd">
         <span class="ico">☀️</span>
-        <span class="mono" style="font-size:16px;font-weight:900;color:${vitdOn(day)?"var(--green)":"var(--muted)"}">${vitdOn(day)?"✓":"—"}</span>
+        <span class="mono" style="font-size:17px;font-weight:900;color:${vitdOn(day)?"var(--green)":"var(--muted)"}">${vitdOn(day)?"✓":"—"}</span>
         <span class="tilelabel">ビタミンD</span>
       </button>
     </div>
@@ -975,7 +975,7 @@ function renderLog() {
       <div class="seclabel">測定データ（InBody・Fitbit等のスクショ）</div>
       <div class="card" style="margin-top:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">
         <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:44px;height:44px">📊</button>
-        <div style="flex:1;font-size:14px;color:var(--muted)">
+        <div style="flex:1;font-size:15px;color:var(--muted)">
           ${(day.muscle != null || day.fatpct != null || day.bedtime || day.waketime || day.rhr != null || day.steps != null)
             ? `<span style="color:var(--text)">${day.muscle != null ? `筋量 <b class="mono" style="color:var(--green)">${day.muscle}</b>kg` : ""}${day.fatpct != null ? ` ・体脂肪 <b class="mono" style="color:var(--ice)">${day.fatpct}</b>%` : ""}${(day.bedtime || day.waketime) ? `<br>睡眠 <b class="mono" style="color:var(--violet)">${day.bedtime ?? "—"}〜${day.waketime ?? "—"}</b>（目標2:30〜9:30）` : ""}${day.rhr != null ? ` ・安静時心拍 <b class="mono" style="color:var(--ice)">${day.rhr}</b>bpm` : ""}${day.steps != null ? `<br>歩数 <b class="mono" style="color:var(--text)">${day.steps.toLocaleString()}</b>歩<span style="color:var(--muted)">（参考表示）</span>` : ""}</span>`
             : "体組成計や睡眠トラッカーのスクショから、体重・筋量・体脂肪・睡眠・就寝起床・心拍・歩数を自動記録します。"}
@@ -984,7 +984,7 @@ function renderLog() {
           ? `<button class="delbtn" data-measdel title="この日の測定データを削除">🗑</button>` : ""}
       </div>
       <input class="setinput" data-mood placeholder="体調ひとこと（任意。例：すっきり／だるい）"
-        value="${esc(day.mood || "")}" style="margin-top:8px;font-size:14px">
+        value="${esc(day.mood || "")}" style="margin-top:8px;font-size:15px">
     </div>
 
     ${(() => {
@@ -1085,7 +1085,7 @@ function renderReview() {
           <div class="dayrow ${x.has?"":"off"}">
             <span class="daydate mono">${x.label}</span>
             ${x.badge?`<span class="daybadge">${x.badge}</span>`:""}
-            <span class="dayicons">${x.veg?"🥬":""}${x.omega3?"🐟":""}${x.fiber?"🌾":""}${x.creatine?"💊":""}${x.steps!=null?`<span class="mono" style="font-size:11px;color:var(--muted)"> ${(x.steps/1000).toFixed(1)}k歩</span>`:""}</span>
+            <span class="dayicons">${x.veg?"🥬":""}${x.omega3?"🐟":""}${x.fiber?"🌾":""}${x.creatine?"💊":""}${x.steps!=null?`<span class="mono" style="font-size:12px;color:var(--muted)"> ${(x.steps/1000).toFixed(1)}k歩</span>`:""}</span>
             <span class="dayp mono" style="color:${!x.has?"var(--muted)":x.p>=FLOOR?"var(--green)":"var(--ice)"}">${x.has?x.p+"g":"—"}</span>
           </div>`).join("")}
       </div>
@@ -1123,7 +1123,7 @@ function proteinChart(days) {
 function weightChart(days) {
   // x座標は「記録日の並び順」でなく実際の日付位置に置く（欠測期間の傾きを歪めない）
   const pts = days.map((d, di) => ({ ...d, di })).filter((d) => d.weight != null);
-  if (pts.length < 2) return `<div style="font-size:13px;color:var(--muted);padding:14px 0">体重の記録が2日分たまるとグラフが出ます。</div>`;
+  if (pts.length < 2) return `<div style="font-size:14px;color:var(--muted);padding:14px 0">体重の記録が2日分たまるとグラフが出ます。</div>`;
   const W = 448, H = 150, padL = 34, padB = 18, padT = 10;
   const ws = pts.map((p) => p.weight);
   const lo = Math.min(...ws) - 1, hi = Math.max(...ws) + 1;
@@ -1143,7 +1143,7 @@ function weightChart(days) {
 function compChart(days, field, color, unit) {
   // weightChartと同じく実際の日付位置でx座標を取る
   const pts = days.map((d, di) => ({ ...d, di })).filter((d) => d[field] != null);
-  if (pts.length < 2) return `<div style="font-size:13px;color:var(--muted);padding:14px 0">記録が2回分たまるとグラフが出ます（${unit}）。</div>`;
+  if (pts.length < 2) return `<div style="font-size:14px;color:var(--muted);padding:14px 0">記録が2回分たまるとグラフが出ます（${unit}）。</div>`;
   const W = 448, H = 140, padL = 36, padB = 18, padT = 10;
   const vs = pts.map((p) => p[field]);
   const lo = Math.min(...vs) - 0.5, hi = Math.max(...vs) + 0.5;
@@ -1170,7 +1170,7 @@ function renderSettings() {
           写真解析・自動概算・ばかおの一言に使います。キーは<b>この端末の中にだけ</b>保存され、外部には送信されません（Anthropicへの通信を除く）。<br>
           取得：console.anthropic.com → API Keys → Create Key。従量課金ですが1回の概算は1円未満〜数円程度です。
         </div>
-        <div style="font-size:13px;margin-bottom:8px;color:${hasKey?"var(--green)":"var(--amber)"}">現在：${hasKey ? "登録済み ✓" : "未登録（AI概算・写真解析・ばかお評価は使えません）"}</div>
+        <div style="font-size:14px;margin-bottom:8px;color:${hasKey?"var(--green)":"var(--amber)"}">現在：${hasKey ? "登録済み ✓" : "未登録（AI概算・写真解析・ばかお評価は使えません）"}</div>
         <input class="setinput mono" id="apikeyInput" type="password" placeholder="sk-ant-..." value="${hasKey ? "●●●●●●●●●●●●" : ""}">
         <div class="setrow">
           <button class="setbtn" data-savekey>保存してテスト</button>
@@ -1185,7 +1185,7 @@ function renderSettings() {
           あなたのGitHubアカウントの<b>秘密Gist</b>にデータを自動保存し、スマホ・PCどの端末からも同じデータを参照できます。<br>
           設定：GitHubでgist権限（Read and write）のみの Fine-grained トークンを発行し、下に貼って保存（各端末で1回）。以降は全自動——起動時に取得、変更のたびに保存。マージは日付ごとに新しい方が優先されます。
         </div>
-        <div style="font-size:13px;margin-bottom:8px;color:${ghToken() ? (syncState === "error" ? "var(--amber)" : "var(--green)") : "var(--amber)"}">
+        <div style="font-size:14px;margin-bottom:8px;color:${ghToken() ? (syncState === "error" ? "var(--amber)" : "var(--green)") : "var(--amber)"}">
           現在：${!ghToken() ? "未設定（データはこの端末内のみ）"
             : syncState === "busy" ? '<span class="spin">↻</span> 同期中…'
             : syncState === "error" ? "同期エラー（トークン・通信を確認してください）"
@@ -1196,7 +1196,7 @@ function renderSettings() {
           <button class="setbtn" data-savegh>保存して同期</button>
           ${ghToken() ? `<button class="setbtn ghost" data-syncnow>今すぐ同期</button><button class="setbtn danger" data-delgh>トークン削除</button>` : ""}
         </div>
-        ${gistId() ? `<div style="font-size:12px;color:var(--muted);margin-top:8px;word-break:break-all">分析用Gist ID（AIに全データ分析を頼むときに伝える）：<br><span class="mono" style="color:var(--text);user-select:all">${esc(gistId())}</span></div>` : ""}
+        ${gistId() ? `<div style="font-size:13px;color:var(--muted);margin-top:8px;word-break:break-all">分析用Gist ID（AIに全データ分析を頼むときに伝える）：<br><span class="mono" style="color:var(--text);user-select:all">${esc(gistId())}</span></div>` : ""}
       </div>
 
       <div class="card setbox">
