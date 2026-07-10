@@ -95,10 +95,12 @@
 
   .section { padding:16px 16px 0; }
   .seclabel { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:11px; letter-spacing:1.5px; font-weight:700; }
-  .seclabel.fold { width:100%; background:none; border:none; padding:6px 0; cursor:pointer; font-family:inherit; text-align:left; }
+  .seclabel.fold { width:100%; background:none; border:none; padding:11px 0; cursor:pointer; font-family:inherit; text-align:left; color:var(--text); font-size:13px; letter-spacing:.5px; }
   .foldlabel { flex-shrink:0; white-space:nowrap; }
   .foldsum { margin-left:auto; letter-spacing:0; font-weight:600; font-size:11px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .chev { flex-shrink:0; }
+  .minidots { display:flex; gap:4px; align-items:center; flex-shrink:0; margin-left:auto; }
+  .minidots + .foldsum { margin-left:8px; }
+  .chev { flex-shrink:0; color:var(--muted); }
   .pacebox { padding:4px 14px; margin-top:10px; }
   .pacerow { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
   .pacerow:last-child { border-bottom:none; }

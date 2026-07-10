@@ -830,6 +830,20 @@ function renderLog() {
       </div>`;
     })()}
 
+    ${(isToday && day.foods.length === 0 && (day.sleep == null || day.weight == null)) ? `
+    <div class="section" style="padding-top:0;padding-bottom:14px">
+      <div class="card" style="padding:8px 12px;display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--muted);flex-shrink:0">朝の記録</span>
+        <span style="margin-left:auto;font-size:15px">🌙</span>
+        <input class="tileinput mono" data-field="sleep" inputmode="decimal" placeholder="h" value="${day.sleep ?? ""}"
+          style="width:52px;font-size:15px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 2px">
+        <span style="font-size:15px">⚖️</span>
+        <input class="tileinput mono" data-field="weight" inputmode="decimal" placeholder="kg" value="${fmt1(day.weight)}"
+          style="width:62px;font-size:15px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 2px">
+        <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:38px;height:38px;font-size:16px" title="測定スクショを読み取る">📊</button>
+      </div>
+    </div>` : ""}
+
     ${dayActs(day).filter((a) => MENU[a]).map((a) => {
       const checks = (day.workout && day.workout.checks) || [];
       const done = MENU[a].filter((ex) => checks.includes(ex.id)).length;
@@ -932,32 +946,6 @@ function renderLog() {
           <button class="bakaobtn" data-bakao ${commentBusy?"disabled":""}>${commentBusy?'<span class="spin">◐</span> ばかおが見ています…':"💬 ばかおの一言評価をもらう"}</button>`}
       </div>` : ""}
 
-    ${(() => {
-      const remain = PACE.filter((row) => pc[row.key] < row.target).map((row) => `${row.label}${row.target - pc[row.key]}`);
-      const sum = remain.length ? `あと：${remain.join("・")}` : "今週分クリア ✓";
-      return `<div class="section" style="padding-bottom:${paceOpen ? 0 : 6}px">
-      <button class="seclabel fold" data-pacetoggle><span class="foldlabel">今週の食材ペース${paceOpen ? `（月〜日・${wd}曜＝${wi.dayN}日目）` : ""}</span>${paceOpen ? "" : `<span class="foldsum" style="color:${remain.length ? "var(--muted)" : "var(--green)"}">${sum}</span>`}<span class="chev">${paceOpen ? "▾" : "▸"}</span></button>
-      ${paceOpen ? `<div class="card pacebox">
-        ${PACE.map((row) => {
-          const n = pc[row.key];
-          const hi = row.max || row.target;
-          const met = n >= row.target && n <= hi;
-          const over = n > hi;
-          const dots = Array.from({ length: Math.max(hi, n) }).map((_, i) =>
-            `<span class="dot" style="${i < n ? `background:${over && i >= hi ? "var(--amber)" : row.color};border-color:${over && i >= hi ? "var(--amber)" : row.color}` : i < row.target ? `border-color:${row.color}` : "opacity:.4"}"></span>`).join("");
-          const range = row.max ? `${row.target}〜${row.max}` : `${row.target}`;
-          const stat = over ? `${n}/${range}・今週は十分` : met ? `達成 ${n}/${range}` : `${n}/${range}・あと${row.target - n}`;
-          return `<div class="pacerow">
-            <span class="pacename">${row.label}</span>
-            <div class="dots">${dots}</div>
-            <span class="pacestat mono ${met?"met":""}" ${over?`style="color:var(--amber)"`:""}>${stat}</span>
-          </div>`;
-        }).join("")}
-      </div>
-      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>` : ""}
-    </div>`;
-    })()}
-
     <div class="tiles">
       <div class="tile">
         <span class="ico">🌙</span>
@@ -998,6 +986,37 @@ function renderLog() {
       <input class="setinput" data-mood placeholder="体調ひとこと（任意。例：すっきり／だるい）"
         value="${esc(day.mood || "")}" style="margin-top:8px;font-size:13px">
     </div>
+
+    ${(() => {
+      const mini = PACE.map((row) => {
+        const n = pc[row.key];
+        const hi = row.max || row.target;
+        const col = n > hi ? "var(--amber)" : row.color;
+        return `<span class="dot" style="${n >= row.target ? `background:${col};border-color:${col}` : `border-color:${col}`}"></span>`;
+      }).join("");
+      const nMet = PACE.filter((row) => pc[row.key] >= row.target).length;
+      return `<div class="section" style="padding-top:0;padding-bottom:${paceOpen ? 8 : 14}px">
+      <button class="seclabel fold" data-pacetoggle><span class="foldlabel">今週の食材ペース${paceOpen ? `（月〜日・${wd}曜＝${wi.dayN}日目）` : ""}</span>${paceOpen ? "" : `<span class="minidots">${mini}</span><span class="foldsum mono" style="color:${nMet === PACE.length ? "var(--green)" : "var(--muted)"}">${nMet}/${PACE.length}</span>`}<span class="chev">${paceOpen ? "▾" : "▸"}</span></button>
+      ${paceOpen ? `<div class="card pacebox">
+        ${PACE.map((row) => {
+          const n = pc[row.key];
+          const hi = row.max || row.target;
+          const met = n >= row.target && n <= hi;
+          const over = n > hi;
+          const dots = Array.from({ length: Math.max(hi, n) }).map((_, i) =>
+            `<span class="dot" style="${i < n ? `background:${over && i >= hi ? "var(--amber)" : row.color};border-color:${over && i >= hi ? "var(--amber)" : row.color}` : i < row.target ? `border-color:${row.color}` : "opacity:.4"}"></span>`).join("");
+          const range = row.max ? `${row.target}〜${row.max}` : `${row.target}`;
+          const stat = over ? `${n}/${range}・今週は十分` : met ? `達成 ${n}/${range}` : `${n}/${range}・あと${row.target - n}`;
+          return `<div class="pacerow">
+            <span class="pacename">${row.label}</span>
+            <div class="dots">${dots}</div>
+            <span class="pacestat mono ${met?"met":""}" ${over?`style="color:var(--amber)"`:""}>${stat}</span>
+          </div>`;
+        }).join("")}
+      </div>
+      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>` : ""}
+    </div>`;
+    })()}
   `;
 }
 
@@ -1236,7 +1255,8 @@ function bindEvents() {
   }
   const send = $("[data-send]"); if (send) send.addEventListener("click", submitText);
   const photo = $("[data-photo]"); if (photo) photo.addEventListener("click", () => $("#photoInput").click());
-  const ib = $("[data-inbody]"); if (ib) ib.addEventListener("click", () => $("#inbodyInput").click());
+  document.querySelectorAll("[data-inbody]").forEach((b) =>
+    b.addEventListener("click", () => $("#inbodyInput").click()));
 
   document.querySelectorAll("[data-del]").forEach((b) =>
     b.addEventListener("click", () => removeFood(Number(b.dataset.del))));
