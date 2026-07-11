@@ -1,4 +1,4 @@
-/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示）｜更新: 2026-07-10 */
+/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示）｜更新: 2026-07-11 */
 "use strict";
 
 const FLOOR = 100, CEILING = 120;
@@ -142,7 +142,7 @@ let range = 14;
 let busy = false, commentBusy = false;
 let errMsg = "", setMsg = "";
 let inputText = "";
-let menuOpen = false, paceOpen = false; // 折りたたみ状態（メモリのみ・リロードで閉じる）
+let menuOpen = false, paceOpen = false, gaugeOpen = false; // 折りたたみ状態（メモリのみ・リロードで閉じる）
 
 // ---------- ユーティリティ ----------
 const $ = (sel) => document.querySelector(sel);
@@ -753,12 +753,12 @@ function render() {
   const wide = isWide();
   let body;
   if (view === "settings") {
-    body = `<div class="${wide ? "wide-single" : ""}">${renderSettings()}</div>`;
+    body = `<div class="${wide ? "wide-single" : ""}" style="padding-bottom:48px">${renderSettings()}</div>`;
   } else if (wide) {
-    // 大画面：記録（左）+ 振り返り（右）を同時表示
-    body = `<div class="wide-grid"><div class="wcol">${renderLog()}</div><div class="wcol sub">${renderReview()}</div></div>`;
+    // 大画面：記録（左）+ 振り返り（右）を同時表示。左はスティッキー入力欄が下端、右は従来の余白
+    body = `<div class="wide-grid"><div class="wcol">${renderLog()}</div><div class="wcol sub" style="padding-bottom:48px">${renderReview()}</div></div>`;
   } else {
-    body = view === "log" ? renderLog() : renderReview();
+    body = view === "log" ? renderLog() : `<div style="padding-bottom:48px">${renderReview()}</div>`;
   }
   app.innerHTML = `
     <div class="tabs">
@@ -784,10 +784,15 @@ function renderLog() {
   const pct = Math.min(total / CEILING, 1) * 100;
   const floorPct = (FLOOR / CEILING) * 100;
   const carbLimit = CARB_LIMIT[active ? "active" : "rest"];
-  const carbHot = carbs >= carbLimit * 1.2; // 超過表示はバー色(carbBarColor)と同じ120%発火。100〜119%は達成扱い
-  const carbColor = carbBarColor(carbs, carbLimit);
-  const carbPct = Math.min(carbLimit > 0 ? carbs / carbLimit : 0, 1) * 100;
-  const carbDiff = carbs < carbLimit ? `あと ${carbLimit - carbs}g` : `+${carbs - carbLimit}g`;
+  // B-4: 休養日15,000歩超は+50gの活動補正帯を表示（目標データは不変・表示のみ）
+  const carbBand = !active && day.steps != null && day.steps >= STEP_NOTE_MIN;
+  const carbMax = carbBand ? carbLimit + 50 : carbLimit;
+  const carbHot = carbBand ? carbs > carbMax : carbs >= carbLimit * 1.2; // 帯がある日は帯超過のみアンバー（帯なしは従来の120%発火）
+  const carbColor = carbBand && carbs > carbMax ? "var(--amber)" : carbBarColor(carbs, carbMax);
+  const carbPct = Math.min(carbMax > 0 ? carbs / carbMax : 0, 1) * 100;
+  const carbDiff = carbs < carbLimit ? `あと ${carbLimit - carbs}g`
+    : carbBand && carbs <= carbMax ? `補正枠内 あと${carbMax - carbs}g`
+    : `+${carbs - carbMax}g`;
   animNext = { key, gauge: pct, carb: carbPct }; // FLIP用に今回の描画値を記録
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOm = day.foods.some((f) => f.omega3);
@@ -813,6 +818,10 @@ function renderLog() {
         `<button class="dt ${t==="aerobic"?"aero":"active"} ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
     <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日":"休養日"}</b> · 今週の有酸素 <b class="mono">${weeklyAerobic(key)}</b>/1〜2${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日）" : ""}</div>
+    ${(() => {
+      const rem = PACE.filter((row) => pc[row.key] < row.target).map((row) => `${row.label.split("・")[0]}あと${row.target - pc[row.key]}`);
+      return `<button class="pacesum ${rem.length ? "" : "done"}" data-pacejump title="タップで詳細へ">${rem.length ? `今週の残り：${rem.join("・")}` : "今週の食材 ✓"}</button>`;
+    })()}
 
     ${(() => {
       const yd = new Date(cursor); yd.setDate(yd.getDate() - 1);
@@ -869,14 +878,34 @@ function renderLog() {
         value="${esc((day.workout && day.workout.note) || "")}" style="font-size:15px">
     </div>` : ""}
 
-    <div class="gaugewrap">
+    ${(() => {
+      // A-2: 目標到達日はゲージをコンパクト化し、糖質バーを主役に（タップで従来ゲージを展開）
+      const achieved = total >= target;
+      const gaugeBig = !achieved || gaugeOpen;
+      const carbCard = (main) => `
+    <div class="card carbcard ${carbHot?"hot":""}">
+      <div style="display:flex;align-items:baseline;justify-content:space-between">
+        <div style="font-size:14px;color:var(--muted)">糖質（目安 ${carbLimit}g${carbBand ? "＋活動補正" : ""}／${active?"運動日":"休養日"}）</div>
+        <div><span class="mono" style="font-size:${main ? 34 : 26}px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:15px;color:var(--muted)"> g</span></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+        <div class="hbar" style="position:relative${main ? ";height:14px" : ""}">
+          <div class="fill" data-carbfill style="width:${carbPct}%;background:${carbColor}"></div>
+          ${carbBand ? `<div style="position:absolute;top:0;bottom:0;left:${(carbLimit / carbMax) * 100}%;right:0;background:rgba(95,201,222,.14);border-left:1px dashed var(--ice)" title="活動補正+50g"></div>` : ""}
+        </div>
+        <span class="mono" style="flex-shrink:0;font-size:14px;color:var(--muted)">${carbDiff}</span>
+      </div>
+      ${carbHot ? `<div style="font-size:13px;color:var(--amber);margin-top:6px">目安超え。食後の散歩がおすすめ。</div>` : ""}
+    </div>`;
+      const gauge = gaugeBig ? `
+    <div class="gaugewrap" ${achieved ? `data-gaugetoggle style="cursor:pointer"` : ""}>
       <div class="gauge">
         <div class="tube"><div class="fill" style="height:${pct}%;background:${barColor}"></div></div>
         <div class="floorline" style="bottom:${floorPct}%"></div>
         <div class="ceilline"></div>
       </div>
       <div class="gmain">
-        <div class="glabel">たんぱく質</div>
+        <div class="glabel">たんぱく質${achieved ? `<span class="chev" style="float:right;font-weight:400">▾</span>` : ""}</div>
         <div><span class="gnum mono" style="color:${barColor}">${total}</span><span class="gunit mono"> g</span></div>
         <div class="gtarget">今日の目標 ${target}g（${actLabel(day)}）</div>
         <div class="statusrow">
@@ -891,19 +920,18 @@ function renderLog() {
         </div>
         ${wavg != null ? `<div class="weekavg">直近7日平均　<span class="mono" style="color:var(--text);font-size:16px">${wavg}g</span></div>` : ""}
       </div>
-    </div>
-
-    <div class="card carbcard ${carbHot?"hot":""}">
-      <div style="display:flex;align-items:baseline;justify-content:space-between">
-        <div style="font-size:14px;color:var(--muted)">糖質（目安 ${carbLimit}g／${active?"運動日":"休養日"}）</div>
-        <div><span class="mono" style="font-size:26px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:15px;color:var(--muted)"> g</span></div>
+    </div>` : `
+    <div class="card" data-gaugetoggle style="margin:8px 16px 0;padding:10px 14px;cursor:pointer">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <span style="font-size:14px;color:var(--muted);flex-shrink:0">たんぱく質</span>
+        <span class="mono" style="font-size:20px;font-weight:700;color:var(--green)">${total}<small style="font-size:13px;font-weight:400"> g</small></span>
+        <span style="font-size:13px;color:var(--green);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✓ 目標達成（${target}g）</span>
+        <span class="chev" style="margin-left:auto">▸</span>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-        <div class="hbar"><div class="fill" data-carbfill style="width:${carbPct}%;background:${carbColor}"></div></div>
-        <span class="mono" style="flex-shrink:0;font-size:14px;color:var(--muted)">${carbDiff}</span>
-      </div>
-      ${carbHot ? `<div style="font-size:13px;color:var(--amber);margin-top:6px">目安超え。食後の散歩がおすすめ。</div>` : ""}
-    </div>
+      <div class="hbar" style="margin-top:8px;height:6px"><div class="fill" style="width:${pct}%;background:var(--green)"></div></div>
+    </div>`;
+      return gaugeBig ? gauge + carbCard(false) : carbCard(true) + gauge;
+    })()}
     ${(day.steps != null && day.steps >= STEP_NOTE_MIN && !active) ? `
     <div class="walknote">👣 歩数 ${day.steps.toLocaleString()}歩（参考）。休養日ですが活動量が多い日です。糖質＋40〜50gを目安に補給してOK（目標値は変わりません）。</div>` : ""}
 
@@ -920,14 +948,6 @@ function renderLog() {
       if (day.vitd == null && hasVitdFood(day)) auto.push("☀️ビタミンD");
       return auto.length ? `<div class="walknote">${auto.join("・")} は食事記録から自動チェック済み。</div>` : "";
     })()}
-
-    <div class="inputrow">
-      <button class="iconbtn" data-photo ${busy?"disabled":""}>📷</button>
-      <textarea class="mealinput" rows="2" placeholder="食べたものを書く／写真だけでもOK" ${busy?"disabled":""}>${esc(inputText)}</textarea>
-      <button class="sendbtn" data-send ${busy?"disabled":""}>${busy?'<span class="spin">◐</span>':"⏎"}</button>
-    </div>
-    <div class="hint">${busy ? "解析中…" : apiKey() ? "AIが自動概算します。g数を書けばその値を優先。" : "AI概算には設定タブでAPIキー登録が必要です。"}</div>
-    ${errMsg ? `<div class="errmsg">${esc(errMsg)}</div>` : ""}
 
     <div class="foodlist">
       ${day.foods.length === 0
@@ -1015,6 +1035,16 @@ function renderLog() {
       <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>` : ""}
     </div>`;
     })()}
+
+    <div class="stickybar">
+      <div class="inputrow">
+        <button class="iconbtn" data-photo ${busy?"disabled":""}>📷</button>
+        <textarea class="mealinput" rows="2" placeholder="食べたものを書く／写真だけでもOK" ${busy?"disabled":""}>${esc(inputText)}</textarea>
+        <button class="sendbtn" data-send ${busy?"disabled":""}>${busy?'<span class="spin">◐</span>':"⏎"}</button>
+      </div>
+      <div class="hint">${busy ? "解析中…" : apiKey() ? "AIが自動概算します。g数を書けばその値を優先。" : "AI概算には設定タブでAPIキー登録が必要です。"}</div>
+      ${errMsg ? `<div class="errmsg">${esc(errMsg)}</div>` : ""}
+    </div>
   `;
 }
 
@@ -1245,6 +1275,12 @@ function bindEvents() {
   document.querySelectorAll("[data-menutoggle]").forEach((b) =>
     b.addEventListener("click", () => { menuOpen = !menuOpen; render(); }));
   const pt = $("[data-pacetoggle]"); if (pt) pt.addEventListener("click", () => { paceOpen = !paceOpen; render(); });
+  document.querySelectorAll("[data-gaugetoggle]").forEach((b) =>
+    b.addEventListener("click", () => { gaugeOpen = !gaugeOpen; render(); }));
+  const pj = $("[data-pacejump]"); if (pj) pj.addEventListener("click", () => {
+    paceOpen = true; render();
+    const el = $("[data-pacetoggle]"); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 
   const ta = $(".mealinput");
   if (ta) {

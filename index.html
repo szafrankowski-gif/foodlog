@@ -20,7 +20,7 @@
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Hiragino Sans',sans-serif;
     padding-bottom:env(safe-area-inset-bottom);
   }
-  #app { max-width:480px; margin:0 auto; padding:0 0 48px; }
+  #app { max-width:480px; margin:0 auto; padding:0; }
   .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   button { font-family:inherit; }
   input, textarea { font-family:inherit; color:var(--text); }
@@ -49,8 +49,8 @@
   }
   .dt.rest.on { border-color:var(--ice); background:rgba(95,201,222,.12); color:var(--ice); }
   .dt.active.on { border-color:var(--amber); background:rgba(240,180,88,.14); color:var(--amber); }
-  /* 有酸素は糖質目標に影響しない実績なので、運動日(amber)と点灯色を分ける */
-  .dt.aero.on { border-color:var(--ice); background:rgba(95,201,222,.12); color:var(--ice); }
+  /* C-5: 有酸素は糖質目標を動かさない記録専用トグルなので、ON時も塗りなしのゴーストで区別 */
+  .dt.aero.on { border-color:var(--ice); background:transparent; color:var(--ice); }
   .daytype6 { flex-wrap:wrap; }
   .daytype6 .dt { flex:1 1 28%; padding:9px 0; font-size:14px; }
 
@@ -113,6 +113,21 @@
   .pacenote { font-size:13px; color:var(--muted); margin-top:6px; }
 
   .inputrow { display:flex; gap:8px; align-items:flex-end; padding:16px 16px 0; }
+  /* A-1: 記録タブ表示中は入力欄を画面下部に常駐（親指到達域・30秒ルール） */
+  .stickybar {
+    position:sticky; bottom:0; z-index:20; margin-top:16px;
+    background:var(--bg); border-top:1px solid var(--line);
+    padding-bottom:calc(8px + env(safe-area-inset-bottom));
+  }
+  .stickybar .inputrow { padding:10px 16px 0; }
+  .stickybar .hint { margin-top:5px; }
+  /* B-3: 週次食材の残りを上部に1行サマリー表示（タップで最下部の詳細へ） */
+  .pacesum {
+    display:block; width:calc(100% - 32px); margin:0 16px 10px; padding:0;
+    background:none; border:none; text-align:left; cursor:pointer; font-family:inherit;
+    font-size:13px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .pacesum.done { color:var(--green); }
   .iconbtn {
     background:var(--surface2); border:1px solid var(--line); color:var(--ice);
     border-radius:var(--r-l); width:48px; height:48px; font-size:19px; cursor:pointer; flex-shrink:0;
