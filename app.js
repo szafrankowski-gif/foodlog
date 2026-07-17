@@ -937,7 +937,7 @@ function renderLog() {
     <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日":"休養日"}</b> · 今週の有酸素 <b class="mono">${weeklyAerobic(key)}</b>/1〜2${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日）" : ""}</div>
     ${(() => {
       const rem = PACE.filter((row) => pc[row.key] < row.target).map((row) => `${row.label.split("・")[0]}あと${row.target - pc[row.key]}`);
-      return `<button class="pacesum ${rem.length ? "" : "done"}" data-pacejump title="タップで詳細へ">${rem.length ? `今週の残り：${rem.join("・")}` : "今週の食材 ✓"}</button>`;
+      return `<button class="pacesum ${rem.length ? "" : "done"}" data-pacejump><span class="txt">${rem.length ? `今週の残り：${rem.join("・")}` : "今週の食材 ✓"}</span><span class="more">詳細 ›</span></button>`;
     })()}
 
     ${(() => {
@@ -962,12 +962,10 @@ function renderLog() {
       <div class="card" style="padding:8px 12px;display:flex;align-items:center;gap:8px">
         <span style="font-size:13px;color:var(--muted);flex-shrink:0">朝の記録</span>
         <span style="margin-left:auto;font-size:17px">🌙</span>
-        <input class="tileinput mono" data-field="sleep" inputmode="decimal" placeholder="h" value="${day.sleep ?? ""}"
-          style="width:52px;font-size:17px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 2px">
+        <input class="numinput mono" data-field="sleep" inputmode="decimal" placeholder="h" value="${day.sleep ?? ""}" style="width:52px">
         <span style="font-size:17px">⚖️</span>
-        <input class="tileinput mono" data-field="weight" inputmode="decimal" placeholder="kg" value="${fmt1(day.weight)}"
-          style="width:62px;font-size:17px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 2px">
-        <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:38px;height:38px;font-size:18px" title="測定スクショを読み取る">📊</button>
+        <input class="numinput mono" data-field="weight" inputmode="decimal" placeholder="kg" value="${fmt1(day.weight)}" style="width:62px">
+        <button class="iconbtn s" data-inbody ${busy?"disabled":""} title="測定スクショを読み取る">📊</button>
       </div>
     </div>` : ""}
 
@@ -1093,10 +1091,10 @@ function renderLog() {
     </div>
     <div class="movechips">
       <span class="mclabel">🚶 食後の運動</span>
-      <button class="mchip" data-movechip="walk:10">10分</button>
-      <button class="mchip" data-movechip="walk:15">15分</button>
-      <button class="mchip" data-movechip="walk:30">30分</button>
-      <button class="mchip" data-movechip="squat:3">💪 スクワット</button>
+      <button class="chip" data-movechip="walk:10">10分</button>
+      <button class="chip" data-movechip="walk:15">15分</button>
+      <button class="chip" data-movechip="walk:30">30分</button>
+      <button class="chip" data-movechip="squat:3">💪 スクワット</button>
     </div>
     ${(() => {
       const cfg = bgCfg();
@@ -1106,9 +1104,9 @@ function renderLog() {
       return `<div class="section" style="padding-top:12px;padding-bottom:${bgOpen ? 8 : 0}px">
       <button class="seclabel fold" data-bgtoggle><span class="foldlabel">🩸 血糖予報</span><span class="foldsum mono" style="color:${col}">${bg ? `ピーク目安 ${bg.peak}` : "—"}</span><span class="chev">${bgOpen ? "▾" : "▸"}</span></button>
       ${bgOpen ? (bg ? `<div class="card" style="padding:8px 10px 6px">${bg.svg}
-        <div style="display:flex;align-items:baseline;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
           <div style="flex:1;font-size:11px;color:var(--muted);margin-top:2px">推定カーブ（実測が常に正・医療判断には使わない）。ベース${Number(cfg.base)}／🟡140・🔴180／🚶=運動記録</div>
-          <button class="smallbtn" data-bgrefresh>${syncState === "busy" ? '<span class="spin">↻</span> 更新中…' : "↻ 更新"}</button>
+          <button class="btn-s" data-bgrefresh ${syncState === "busy" ? "disabled" : ""}>${syncState === "busy" ? '<span class="spin">◐</span> 更新中…' : "更新"}</button>
         </div>
       </div>` : `<div class="hint" style="margin:4px 0 0">時刻つきの食事記録があるとカーブが出ます。</div>`) : ""}
     </div>`;
@@ -1120,7 +1118,7 @@ function renderLog() {
           <div class="bakaocard">
             <div class="bakaotitle">🥗 ばかおの一言</div>
             <div class="bakaotext">${esc(day.comment)}</div>
-            <button class="linkbtn" data-bakao>${commentBusy?"更新中…":"評価を更新"}</button>
+            <button class="btn-s" data-bakao ${commentBusy?"disabled":""} style="margin-top:8px">${commentBusy?'<span class="spin">◐</span> 更新中…':"評価を更新"}</button>
           </div>` : `
           <button class="bakaobtn" data-bakao ${commentBusy?"disabled":""}>${commentBusy?'<span class="spin">◐</span> ばかおが見ています…':"💬 ばかおの一言評価をもらう"}</button>`}
       </div>` : ""}
@@ -1142,7 +1140,7 @@ function renderLog() {
     <div class="section" style="padding-bottom:8px">
       <div class="seclabel">測定データ（InBody・Fitbit等のスクショ）</div>
       <div class="card" style="margin-top:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">
-        <button class="iconbtn" data-inbody ${busy?"disabled":""} style="width:44px;height:44px">📊</button>
+        <button class="iconbtn m" data-inbody ${busy?"disabled":""}>📊</button>
         <div style="flex:1;font-size:15px;color:var(--muted)">
           ${(day.muscle != null || day.fatpct != null || day.bedtime || day.waketime || day.rhr != null || day.steps != null)
             ? `<span style="color:var(--text)">${day.muscle != null ? `筋量 <b class="mono" style="color:var(--green)">${day.muscle}</b>kg` : ""}${day.fatpct != null ? ` ・体脂肪 <b class="mono" style="color:var(--ice)">${day.fatpct}</b>%` : ""}${(day.bedtime || day.waketime) ? `<br>睡眠 <b class="mono" style="color:var(--violet)">${day.bedtime ?? "—"}〜${day.waketime ?? "—"}</b>（目標2:30〜9:30）` : ""}${day.rhr != null ? ` ・安静時心拍 <b class="mono" style="color:var(--ice)">${day.rhr}</b>bpm` : ""}${day.steps != null ? `<br>歩数 <b class="mono" style="color:var(--text)">${day.steps.toLocaleString()}</b>歩<span style="color:var(--muted)">（参考表示）</span>` : ""}</span>`
@@ -1231,9 +1229,9 @@ function renderReview() {
 
   return `
     <div class="rangebtns">
-      <button class="rbtn ${range===14?"on":""}" data-range="14">2週間</button>
-      <button class="rbtn ${range===30?"on":""}" data-range="30">1ヶ月</button>
-      <button class="csvbtn" data-csv>⬇ CSV</button>
+      <button class="btn-s ${range===14?"on":""}" data-range="14">2週間</button>
+      <button class="btn-s ${range===30?"on":""}" data-range="30">1ヶ月</button>
+      <button class="btn-s" data-csv style="margin-left:auto">⬇ CSV</button>
     </div>
     <div class="sumgrid">
       <div class="sumcard"><div class="sumlabel">平均たんぱく質</div><div><span class="sumval mono" style="color:${avgP>=FLOOR?"var(--green)":"var(--ice)"}">${avgP}</span><span class="sumunit mono"> g</span></div><div class="sumnote">記録 ${logged.length}日</div></div>

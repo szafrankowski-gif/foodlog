@@ -12,7 +12,8 @@
     --bg:#0E141A; --surface:#19222C; --surface2:#22303C; --line:#2E3E4C;
     --ice:#5FC9DE; --amber:#F0B458; --text:#E9EEF2; --muted:#8598A6;
     --green:#7FD68B; --violet:#9D8CE0; --red:#E08C8C;
-    --r-s:6px; --r-m:10px; --r-l:12px; /* 角丸トークン：小=チップ/バー・中=設定系・大=カード/ボタン */
+    --r-s:6px; --r-m:10px; --r-l:12px; --r-full:999px; /* 角丸：小=行内マイクロ・中=小ボタン/設定系・大=カード/主ボタン・full=チップ */
+    --tint-ice:rgba(95,201,222,.12); --tint-green:rgba(127,214,139,.12); --tint-amber:rgba(240,180,88,.14); /* 選択状態のティント */
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body {
@@ -31,7 +32,7 @@
     flex:1; padding:9px 0; border-radius:var(--r-m); font-size:16px; font-weight:700;
     border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;
   }
-  .tab.on { border-color:var(--ice); background:rgba(95,201,222,.14); color:var(--ice); }
+  .tab.on { border-color:var(--ice); background:var(--tint-ice); color:var(--ice); }
 
   .datenav { display:flex; align-items:center; justify-content:space-between; padding:4px 16px 10px; }
   .navbtn {
@@ -47,8 +48,8 @@
     flex:1; padding:10px 0; border-radius:var(--r-l); font-size:15px; font-weight:600;
     border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;
   }
-  .dt.rest.on { border-color:var(--ice); background:rgba(95,201,222,.12); color:var(--ice); }
-  .dt.active.on { border-color:var(--amber); background:rgba(240,180,88,.14); color:var(--amber); }
+  .dt.rest.on { border-color:var(--ice); background:var(--tint-ice); color:var(--ice); }
+  .dt.active.on { border-color:var(--amber); background:var(--tint-amber); color:var(--amber); }
   /* C-5: 有酸素は糖質目標を動かさない記録専用トグルなので、ON時も塗りなしのゴーストで区別 */
   .dt.aero.on { border-color:var(--ice); background:transparent; color:var(--ice); }
   .daytype6 { flex-wrap:wrap; }
@@ -90,8 +91,9 @@
     flex:1; border-radius:var(--r-l); padding:10px 2px; display:flex; flex-direction:column; align-items:center; gap:4px;
     border:1px solid var(--line); background:var(--surface); font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap; min-width:0;
   }
-  .pill.on { border-color:var(--green); background:rgba(127,214,139,.12); color:var(--green); }
+  .pill.on { border-color:var(--green); background:var(--tint-green); color:var(--green); }
   button.pill { cursor:pointer; }
+  button.pill:active { transform:scale(.96); }
   .pill .ico { font-size:17px; }
 
   .section { padding:16px 16px 0; }
@@ -121,18 +123,24 @@
   }
   .stickybar .inputrow { padding:10px 16px 0; }
   .stickybar .hint { margin-top:5px; }
-  /* B-3: 週次食材の残りを上部に1行サマリー表示（タップで最下部の詳細へ） */
+  /* B-3: 週次食材の残りを上部に1行サマリー表示（タップで最下部の詳細へ）。末尾の「詳細 ›」がタップ可能の合図 */
   .pacesum {
-    display:block; width:calc(100% - 32px); margin:0 16px 10px; padding:0;
+    display:flex; align-items:center; gap:6px; width:calc(100% - 32px); margin:0 16px 10px; padding:0;
     background:none; border:none; text-align:left; cursor:pointer; font-family:inherit;
-    font-size:13px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:13px; color:var(--muted);
   }
+  .pacesum .txt { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pacesum .more { flex-shrink:0; color:var(--ice); }
   .pacesum.done { color:var(--green); }
   .iconbtn {
     background:var(--surface2); border:1px solid var(--line); color:var(--ice);
     border-radius:var(--r-l); width:48px; height:48px; font-size:19px; cursor:pointer; flex-shrink:0;
   }
   .iconbtn:disabled { color:var(--muted); }
+  .iconbtn.s { width:38px; height:38px; font-size:16px; } /* 朝の記録行など */
+  .iconbtn.m { width:44px; height:44px; font-size:18px; } /* 測定カードなど */
+  /* 行内の小型数値入力（朝の記録行。widthのみ呼び出し側で指定） */
+  .numinput { background:var(--surface2); border:1px solid var(--line); border-radius:var(--r-m); padding:6px 2px; font-size:17px; text-align:center; }
   textarea.mealinput {
     flex:1; background:var(--surface); border:1px solid var(--line); border-radius:var(--r-l);
     padding:12px 14px; font-size:17px; outline:none; resize:none; line-height:1.5; min-width:0;
@@ -157,20 +165,24 @@
   .foodnums { display:flex; align-items:center; gap:10px; flex-shrink:0; }
   .delbtn { background:none; border:none; color:var(--muted); font-size:17px; cursor:pointer; padding:4px; }
   .emptymsg { color:var(--muted); font-size:15px; text-align:center; padding:18px 0; }
-  /* 食後運動のクイック記録チップ（血糖対策の時刻付きログ。1タップで現在時刻を記録） */
+  /* Tier4 チップ（1タップ記録の粒。丸形がチップ族の識別形状） */
   .movechips { display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:10px 16px 0; }
   .mclabel { font-size:12px; color:var(--muted); flex-shrink:0; }
-  .mchip {
+  .chip {
+    height:30px; display:inline-flex; align-items:center; padding:0 13px;
     border:1px solid var(--line); background:var(--surface); color:var(--muted);
-    border-radius:999px; padding:5px 12px; font-size:13px; cursor:pointer; font-family:inherit;
+    border-radius:var(--r-full); font-size:13px; cursor:pointer; font-family:inherit;
   }
-  .mchip:active { border-color:var(--ice); color:var(--ice); }
-  /* カード内の小さめアクションボタン（血糖予報の更新など） */
-  .smallbtn {
-    border:1px solid var(--ice); background:rgba(95,201,222,.12); color:var(--ice);
-    border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; flex-shrink:0;
+  .chip:active { border-color:var(--ice); color:var(--ice); }
+  /* Tier3 小アクション（カード内・行内の単発操作。「アクセント枠+ティント+アクセント文字」は選択状態専用の衣装なので単発アクションには使わない） */
+  .btn-s {
+    height:32px; padding:0 14px; display:inline-flex; align-items:center; gap:5px;
+    background:transparent; border:1px solid var(--line); color:var(--muted);
+    border-radius:var(--r-m); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; flex-shrink:0;
   }
-  .smallbtn:active { background:rgba(95,201,222,.25); }
+  .btn-s:active { border-color:var(--ice); color:var(--ice); }
+  .btn-s:disabled { opacity:.4; }
+  .btn-s.on { border-color:var(--ice); background:var(--tint-ice); color:var(--ice); } /* セグメント選択用（期間切替など） */
 
   .bakaobox { margin:10px 16px 0; }
   .bakaocard { background:rgba(127,214,139,.08); border:1px solid var(--line); border-radius:var(--r-l); padding:12px 14px; }
@@ -181,14 +193,13 @@
     border-radius:var(--r-l); padding:12px 0; font-size:15px; font-weight:600; cursor:pointer;
   }
   .bakaobtn:disabled { color:var(--muted); }
-  .linkbtn { background:none; border:none; color:var(--muted); font-size:13px; margin-top:8px; cursor:pointer; padding:0; }
 
   .tiles { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; padding:12px 16px 0; }
   .tile {
     background:var(--surface); border:1px solid var(--line); border-radius:var(--r-l);
     padding:12px 2px; display:flex; flex-direction:column; align-items:center; gap:6px; min-width:0;
   }
-  .tile.on { border-color:var(--green); background:rgba(127,214,139,.12); }
+  .tile.on { border-color:var(--green); background:var(--tint-green); }
   button.tile { cursor:pointer; }
   .tile .ico { font-size:18px; }
   .tileinput {
@@ -199,9 +210,6 @@
   .walknote { font-size:13px; color:var(--green); margin:8px 16px 0; }
 
   .rangebtns { display:flex; gap:6px; align-items:center; padding:2px 16px 14px; }
-  .rbtn { padding:6px 14px; border-radius:8px; font-size:14px; font-weight:600; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; }
-  .rbtn.on { border-color:var(--ice); background:rgba(95,201,222,.12); color:var(--ice); }
-  .csvbtn { margin-left:auto; padding:6px 12px; border-radius:8px; font-size:14px; font-weight:600; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; }
 
   .sumgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:0 16px 18px; }
   .sumcard { background:var(--surface); border:1px solid var(--line); border-radius:var(--r-l); padding:12px 14px; }
