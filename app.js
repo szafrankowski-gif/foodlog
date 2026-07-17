@@ -1108,7 +1108,7 @@ function renderLog() {
       ${bgOpen ? (bg ? `<div class="card" style="padding:8px 10px 6px">${bg.svg}
         <div style="display:flex;align-items:baseline;gap:8px">
           <div style="flex:1;font-size:11px;color:var(--muted);margin-top:2px">推定カーブ（実測が常に正・医療判断には使わない）。ベース${Number(cfg.base)}／🟡140・🔴180／🚶=運動記録</div>
-          <button class="linkbtn" data-bgrefresh style="flex-shrink:0;margin-top:0">${syncState === "busy" ? "更新中…" : "↻ 更新"}</button>
+          <button class="smallbtn" data-bgrefresh>${syncState === "busy" ? '<span class="spin">↻</span> 更新中…' : "↻ 更新"}</button>
         </div>
       </div>` : `<div class="hint" style="margin:4px 0 0">時刻つきの食事記録があるとカーブが出ます。</div>`) : ""}
     </div>`;
