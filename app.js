@@ -1294,8 +1294,10 @@ function proteinChart(days) {
     ? `<text x="${(padL + i * iw + iw/2).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${d.label}</text>` : "").join("");
   const axis = [0, 50, 100, maxY].map((v) =>
     `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v}</text>`).join("");
+  const grid = [0, 50].map((v) =>
+    `<line x1="${padL}" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
-    ${axis}${bars}
+    ${grid}${axis}${bars}
     <line x1="${padL}" x2="${W}" y1="${y(FLOOR).toFixed(1)}" y2="${y(FLOOR).toFixed(1)}" stroke="#7FD68B" stroke-width="1.5" stroke-dasharray="4 3"/>
     <line x1="${padL}" x2="${W}" y1="${y(CEILING).toFixed(1)}" y2="${y(CEILING).toFixed(1)}" stroke="#F0B458" stroke-width="1.5"/>
     ${labels}
@@ -1317,8 +1319,10 @@ function weightChart(days) {
     ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
   const axis = [lo, (lo+hi)/2, hi].map((v) =>
     `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
+  const grid = [lo, (lo+hi)/2, hi].map((v) =>
+    `<line x1="${padL}" x2="${W-8}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
-    ${axis}<path d="${path}" fill="none" stroke="#5FC9DE" stroke-width="2"/>${dots}${labels}
+    ${grid}${axis}<path d="${path}" fill="none" stroke="#5FC9DE" stroke-width="2"/>${dots}${labels}
   </svg>`;
 }
 
@@ -1337,8 +1341,10 @@ function compChart(days, field, color, unit) {
     ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
   const axis = [lo, (lo+hi)/2, hi].map((v) =>
     `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
+  const grid = [lo, (lo+hi)/2, hi].map((v) =>
+    `<line x1="${padL}" x2="${W-8}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
-    ${axis}<path d="${path}" fill="none" stroke="${color}" stroke-width="2"/>${dots}${labels}
+    ${grid}${axis}<path d="${path}" fill="none" stroke="${color}" stroke-width="2"/>${dots}${labels}
   </svg>`;
 }
 
