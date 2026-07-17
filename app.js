@@ -827,14 +827,14 @@ function bgCurveSvg(cfg, day) {
   const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.m).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
   const ticks = []; for (let h = Math.ceil(start / 180) * 3; h <= 24; h += 3) ticks.push(h);
   return { peak: Math.round(pm.v), svg: `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="血糖予測カーブ">
-    ${ticks.map((h) => `<line x1="${x(h*60).toFixed(1)}" y1="${T}" x2="${x(h*60).toFixed(1)}" y2="${H-B}" stroke="#2E3E4C" stroke-width=".5" opacity=".5"/><text x="${x(h*60).toFixed(1)}" y="${H-B+12}" fill="#8598A6" font-size="9" text-anchor="middle">${h}時</text>`).join("")}
+    ${ticks.map((h) => `<line x1="${x(h*60).toFixed(1)}" y1="${T}" x2="${x(h*60).toFixed(1)}" y2="${H-B}" stroke="#2E3E4C" stroke-width=".5" opacity=".5"/><text x="${x(h*60).toFixed(1)}" y="${H-B+12}" fill="#8598A6" font-size="13" text-anchor="middle">${h}時</text>`).join("")}
     <line x1="${L}" y1="${y(base).toFixed(1)}" x2="${W-R}" y2="${y(base).toFixed(1)}" stroke="#8598A6" stroke-width=".6" stroke-dasharray="2 4" opacity=".7"/>
-    <line x1="${L}" y1="${y(140).toFixed(1)}" x2="${W-R}" y2="${y(140).toFixed(1)}" stroke="#F0B458" stroke-width=".6" stroke-dasharray="4 4" opacity=".7"/><text x="${L-3}" y="${(y(140)+3).toFixed(1)}" fill="#F0B458" font-size="9" text-anchor="end">140</text>
-    <line x1="${L}" y1="${y(180).toFixed(1)}" x2="${W-R}" y2="${y(180).toFixed(1)}" stroke="#E08C8C" stroke-width=".6" stroke-dasharray="4 4" opacity=".8"/><text x="${L-3}" y="${(y(180)+3).toFixed(1)}" fill="#E08C8C" font-size="9" text-anchor="end">180</text>
+    <line x1="${L}" y1="${y(140).toFixed(1)}" x2="${W-R}" y2="${y(140).toFixed(1)}" stroke="#F0B458" stroke-width=".6" stroke-dasharray="4 4" opacity=".7"/><text x="${L-3}" y="${(y(140)+3).toFixed(1)}" fill="#F0B458" font-size="13" text-anchor="end">140</text>
+    <line x1="${L}" y1="${y(180).toFixed(1)}" x2="${W-R}" y2="${y(180).toFixed(1)}" stroke="#E08C8C" stroke-width=".6" stroke-dasharray="4 4" opacity=".8"/><text x="${L-3}" y="${(y(180)+3).toFixed(1)}" fill="#E08C8C" font-size="13" text-anchor="end">180</text>
     <path d="${path}" fill="none" stroke="#5FC9DE" stroke-width="2" stroke-linejoin="round"/>
     ${meals.map((m) => `<circle cx="${x(m.min).toFixed(1)}" cy="${y(pts.find((p) => p.m >= m.min).v).toFixed(1)}" r="2.6" fill="#0E141A" stroke="#5FC9DE" stroke-width="1.4"/>`).join("")}
-    ${moves.filter((mv) => mv.m >= start).map((mv) => `<text x="${x(mv.m).toFixed(1)}" y="${T+8}" font-size="9" text-anchor="middle">${mv.kind === "squat" ? "💪" : "🚶"}</text>`).join("")}
-    ${pm.v > base + 5 ? `<circle cx="${x(pm.m).toFixed(1)}" cy="${y(pm.v).toFixed(1)}" r="3" fill="#5FC9DE"/><text x="${x(pm.m).toFixed(1)}" y="${(y(pm.v)-6).toFixed(1)}" fill="#E9EEF2" font-size="10" font-weight="700" text-anchor="middle">${Math.round(pm.v)}</text>` : ""}
+    ${moves.filter((mv) => mv.m >= start).map((mv) => `<text x="${x(mv.m).toFixed(1)}" y="${T+8}" font-size="13" text-anchor="middle">${mv.kind === "squat" ? "💪" : "🚶"}</text>`).join("")}
+    ${pm.v > base + 5 ? `<circle cx="${x(pm.m).toFixed(1)}" cy="${y(pm.v).toFixed(1)}" r="3" fill="#5FC9DE"/><text x="${x(pm.m).toFixed(1)}" y="${(y(pm.v)-6).toFixed(1)}" fill="#E9EEF2" font-size="15" font-weight="700" text-anchor="middle">${Math.round(pm.v)}</text>` : ""}
   </svg>` };
 }
 
@@ -1290,10 +1290,11 @@ function proteinChart(days) {
     return `<rect x="${x.toFixed(1)}" y="${(H - padB - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="2" fill="${color}"/>`;
   }).join("");
   const step = days.length > 20 ? 5 : days.length > 10 ? 2 : 1;
+  // 左端の日付ラベルは内側に流し、軸ラベル「0」との衝突を避ける
   const labels = days.map((d, i) => i % step === 0
-    ? `<text x="${(padL + i * iw + iw/2).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${d.label}</text>` : "").join("");
+    ? `<text x="${(padL + i * iw + (i === 0 ? 0 : iw/2)).toFixed(1)}" y="${H-4}" font-size="13" fill="#8598A6" text-anchor="${i === 0 ? "start" : "middle"}">${d.label}</text>` : "").join("");
   const axis = [0, 50, 100, maxY].map((v) =>
-    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v}</text>`).join("");
+    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="13" fill="#8598A6" text-anchor="end">${v}</text>`).join("");
   const grid = [0, 50].map((v) =>
     `<line x1="${padL}" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
@@ -1315,10 +1316,16 @@ function weightChart(days) {
   const y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo));
   const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p.weight).toFixed(1)}`).join(" ");
   const dots = pts.map((p) => `<circle cx="${x(p).toFixed(1)}" cy="${y(p.weight).toFixed(1)}" r="3" fill="#5FC9DE"/>`).join("");
-  const labels = pts.map((p, i) => (pts.length <= 8 || i === 0 || i === pts.length - 1)
-    ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
+  // 端の日付ラベルは内側に流し、左下の軸ラベルとの衝突を避ける。
+  // 全点ラベルは「点数8以下かつ隣接間隔42以上」のときだけ（密集時は両端のみ）
+  const anch = (px) => px - padL < 16 ? "start" : (W - 8) - px < 16 ? "end" : "middle";
+  const minGap = pts.length > 1 ? Math.min(...pts.slice(1).map((p, i) => x(p) - x(pts[i]))) : Infinity;
+  const showAll = pts.length <= 8 && minGap >= 42;
+  const endGap = pts.length > 1 ? x(pts[pts.length - 1]) - x(pts[0]) : Infinity;
+  const labels = pts.map((p, i) => (showAll || (i === 0 && endGap >= 60) || i === pts.length - 1)
+    ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="13" fill="#8598A6" text-anchor="${anch(x(p))}">${p.label}</text>` : "").join("");
   const axis = [lo, (lo+hi)/2, hi].map((v) =>
-    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
+    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="13" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
   const grid = [lo, (lo+hi)/2, hi].map((v) =>
     `<line x1="${padL}" x2="${W-8}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
@@ -1337,10 +1344,16 @@ function compChart(days, field, color, unit) {
   const y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo));
   const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p[field]).toFixed(1)}`).join(" ");
   const dots = pts.map((p) => `<circle cx="${x(p).toFixed(1)}" cy="${y(p[field]).toFixed(1)}" r="3" fill="${color}"/>`).join("");
-  const labels = pts.map((p, i) => (pts.length <= 8 || i === 0 || i === pts.length - 1)
-    ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="9" fill="#8598A6" text-anchor="middle">${p.label}</text>` : "").join("");
+  // 端の日付ラベルは内側に流し、左下の軸ラベルとの衝突を避ける。
+  // 全点ラベルは「点数8以下かつ隣接間隔42以上」のときだけ（密集時は両端のみ）
+  const anch = (px) => px - padL < 16 ? "start" : (W - 8) - px < 16 ? "end" : "middle";
+  const minGap = pts.length > 1 ? Math.min(...pts.slice(1).map((p, i) => x(p) - x(pts[i]))) : Infinity;
+  const showAll = pts.length <= 8 && minGap >= 42;
+  const endGap = pts.length > 1 ? x(pts[pts.length - 1]) - x(pts[0]) : Infinity;
+  const labels = pts.map((p, i) => (showAll || (i === 0 && endGap >= 60) || i === pts.length - 1)
+    ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="13" fill="#8598A6" text-anchor="${anch(x(p))}">${p.label}</text>` : "").join("");
   const axis = [lo, (lo+hi)/2, hi].map((v) =>
-    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
+    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="13" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
   const grid = [lo, (lo+hi)/2, hi].map((v) =>
     `<line x1="${padL}" x2="${W-8}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
