@@ -1106,7 +1106,10 @@ function renderLog() {
       return `<div class="section" style="padding-top:12px;padding-bottom:${bgOpen ? 8 : 0}px">
       <button class="seclabel fold" data-bgtoggle><span class="foldlabel">🩸 血糖予報</span><span class="foldsum mono" style="color:${col}">${bg ? `ピーク目安 ${bg.peak}` : "—"}</span><span class="chev">${bgOpen ? "▾" : "▸"}</span></button>
       ${bgOpen ? (bg ? `<div class="card" style="padding:8px 10px 6px">${bg.svg}
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">推定カーブ（実測が常に正・医療判断には使わない）。ベース${Number(cfg.base)}／🟡140・🔴180／🚶=運動記録</div>
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <div style="flex:1;font-size:11px;color:var(--muted);margin-top:2px">推定カーブ（実測が常に正・医療判断には使わない）。ベース${Number(cfg.base)}／🟡140・🔴180／🚶=運動記録</div>
+          <button class="linkbtn" data-bgrefresh style="flex-shrink:0;margin-top:0">${syncState === "busy" ? "更新中…" : "↻ 更新"}</button>
+        </div>
       </div>` : `<div class="hint" style="margin:4px 0 0">時刻つきの食事記録があるとカーブが出ます。</div>`) : ""}
     </div>`;
     })()}
@@ -1447,6 +1450,10 @@ function bindEvents() {
   document.querySelectorAll("[data-gaugetoggle]").forEach((b) =>
     b.addEventListener("click", () => { gaugeOpen = !gaugeOpen; render(); }));
   const bgt = $("[data-bgtoggle]"); if (bgt) bgt.addEventListener("click", () => { bgOpen = !bgOpen; render(); });
+  const bgr = $("[data-bgrefresh]"); if (bgr) bgr.addEventListener("click", () => {
+    // 同期設定済みなら他端末の記録をpullしてから再計算（syncNowが完了時にrenderする）。未設定なら再描画のみ
+    if (ghToken()) syncNow(); else render();
+  });
   const sbg = $("[data-savebg]"); if (sbg) sbg.addEventListener("click", () => {
     const v = $("#bgcfgInput").value.trim();
     if (!v) { setMsg = "血糖予報：係数JSONを貼り付けてください。"; render(); return; }
