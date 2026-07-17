@@ -1211,6 +1211,7 @@ function renderReview() {
       weight: dd && dd.weight ? Number(dd.weight) : null,
       muscle: dd && dd.muscle != null ? Number(dd.muscle) : null,
       fatpct: dd && dd.fatpct != null ? Number(dd.fatpct) : null,
+      sleep: dd && dd.sleep != null && dd.sleep !== "" && !isNaN(Number(dd.sleep)) ? Number(dd.sleep) : null,
       veg: !!((dd && dd.foods) || []).some((f) => f.veg),
       omega3: !!((dd && dd.foods) || []).some((f) => f.omega3),
       fiber: !!((dd && dd.foods) || []).some((f) => f.fiber),
@@ -1253,6 +1254,10 @@ function renderReview() {
     <div class="chartbox">
       <div class="seclabel">体脂肪率の推移</div>
       ${compChart(days, "fatpct", "#F0B458", "%")}
+    </div>
+    <div class="chartbox">
+      <div class="seclabel">🌙 睡眠時間の推移</div>
+      ${compChart(days, "sleep", "#9D8CE0", "h")}
     </div>
     <div class="section" style="padding-top:0">
       <div class="seclabel">日別ログ</div>
