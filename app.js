@@ -637,18 +637,38 @@ function fileHHMM(file, key) {
   } catch (e) { return null; }
 }
 
+// 下部バーの万能入力：運動・体重・睡眠はAIを介さずローカル判定（APIキー不要）。
+// 全トークンがローカル解釈できた場合のみ適用し、それ以外は食事としてAI概算へ回す。
+function parseLocalInput(text) {
+  const toks = text.split(/[、,，\s　・\/]+/).filter(Boolean);
+  if (!toks.length) return null;
+  const patch = {}, moves = [];
+  for (const tok of toks) {
+    let m;
+    if ((m = tok.match(/^(?:食後の?)?(散歩|ウォーキング|スクワット)(?:(\d{1,3})分)?$/))) {
+      const kind = m[1] === "スクワット" ? "squat" : "walk";
+      moves.push({ kind, min: Number(m[2]) || (kind === "walk" ? 15 : 3) });
+      continue;
+    }
+    if ((m = tok.match(/^体重(\d{2,3}(?:\.\d+)?)(?:kg|キロ)?$/))) { patch.weight = m[1]; continue; }
+    if ((m = tok.match(/^睡眠(\d{1,2}(?:\.\d+)?)(?:h|時間)?$/))) { patch.sleep = m[1]; continue; }
+    return null; // 1つでも解釈できなければ食事テキストとしてAIへ
+  }
+  return { patch, moves };
+}
+
 async function submitText() {
   const t = inputText.trim();
   if (!t || busy) return;
-  // 食後運動の簡易記録：「散歩30分」等はAIを介さずローカル判定（血糖対策の時刻付きログ。APIキー不要）
-  const mv = t.replace(/[\s　]/g, "").match(/^(?:食後の?)?(散歩|ウォーキング|スクワット)(?:(\d{1,3})分)?$/);
-  if (mv) {
+  const local = parseLocalInput(t);
+  if (local) {
     const key = toKey(cursor);
     const day = getDay(key);
-    const kind = mv[1] === "スクワット" ? "squat" : "walk";
-    const min = Number(mv[2]) || (kind === "walk" ? 15 : 3);
+    const stamp = toKey(new Date()) === key ? new Date().toTimeString().slice(0, 5) : null;
     inputText = ""; errMsg = "";
-    updateDay(key, { moves: (day.moves || []).concat({ kind, min, t: toKey(new Date()) === key ? new Date().toTimeString().slice(0, 5) : null }) });
+    const patch = Object.assign({}, local.patch);
+    if (local.moves.length) patch.moves = (day.moves || []).concat(local.moves.map((mv) => Object.assign({}, mv, { t: stamp })));
+    updateDay(key, patch);
     return;
   }
   if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると送信できます。"; render(); return; }
@@ -1165,11 +1185,12 @@ function renderLog() {
 
     <div class="stickybar">
       <div class="inputrow">
-        <button class="iconbtn" data-photo ${busy?"disabled":""}>📷</button>
-        <textarea class="mealinput" rows="2" placeholder="食べたものを書く／写真だけでもOK" ${busy?"disabled":""}>${esc(inputText)}</textarea>
+        <button class="iconbtn" data-photo ${busy?"disabled":""} title="食事の写真">📷</button>
+        <button class="iconbtn" data-inbody ${busy?"disabled":""} title="測定スクショ（体重・歩数・睡眠等）">📊</button>
+        <textarea class="mealinput" rows="2" placeholder="食べたもの／散歩30分／体重60.2" ${busy?"disabled":""}>${esc(inputText)}</textarea>
         <button class="sendbtn" data-send ${busy?"disabled":""}>${busy?'<span class="spin">◐</span>':"⏎"}</button>
       </div>
-      <div class="hint">${busy ? "解析中…" : apiKey() ? "AIが自動概算します。g数を書けばその値を優先。" : "AI概算には設定タブでAPIキー登録が必要です。"}</div>
+      <div class="hint">${busy ? "解析中…" : apiKey() ? "食事はAIが自動概算。「散歩30分」「体重60.2」「睡眠7.5」もここでOK。" : "「散歩30分」「体重60.2」「睡眠7.5」は登録なしで使えます。AI概算には設定タブでAPIキー登録が必要。"}</div>
       ${errMsg ? `<div class="errmsg">${esc(errMsg)}</div>` : ""}
     </div>
   `;
