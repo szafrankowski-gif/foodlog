@@ -157,6 +157,14 @@
   .foodnums { display:flex; align-items:center; gap:10px; flex-shrink:0; }
   .delbtn { background:none; border:none; color:var(--muted); font-size:17px; cursor:pointer; padding:4px; }
   .emptymsg { color:var(--muted); font-size:15px; text-align:center; padding:18px 0; }
+  /* 食後運動のクイック記録チップ（血糖対策の時刻付きログ。1タップで現在時刻を記録） */
+  .movechips { display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:10px 16px 0; }
+  .mclabel { font-size:12px; color:var(--muted); flex-shrink:0; }
+  .mchip {
+    border:1px solid var(--line); background:var(--surface); color:var(--muted);
+    border-radius:999px; padding:5px 12px; font-size:13px; cursor:pointer; font-family:inherit;
+  }
+  .mchip:active { border-color:var(--ice); color:var(--ice); }
 
   .bakaobox { margin:10px 16px 0; }
   .bakaocard { background:rgba(127,214,139,.08); border:1px solid var(--line); border-radius:var(--r-l); padding:12px 14px; }

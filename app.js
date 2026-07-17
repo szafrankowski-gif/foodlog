@@ -639,6 +639,17 @@ function fileHHMM(file, key) {
 async function submitText() {
   const t = inputText.trim();
   if (!t || busy) return;
+  // 食後運動の簡易記録：「散歩30分」等はAIを介さずローカル判定（血糖対策の時刻付きログ。APIキー不要）
+  const mv = t.replace(/[\s　]/g, "").match(/^(?:食後の?)?(散歩|ウォーキング|スクワット)(?:(\d{1,3})分)?$/);
+  if (mv) {
+    const key = toKey(cursor);
+    const day = getDay(key);
+    const kind = mv[1] === "スクワット" ? "squat" : "walk";
+    const min = Number(mv[2]) || (kind === "walk" ? 15 : 3);
+    inputText = ""; errMsg = "";
+    updateDay(key, { moves: (day.moves || []).concat({ kind, min, t: toKey(new Date()) === key ? new Date().toTimeString().slice(0, 5) : null }) });
+    return;
+  }
   if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると送信できます。"; render(); return; }
   busy = true; errMsg = ""; render();
   try {
@@ -950,18 +961,36 @@ function renderLog() {
     })()}
 
     <div class="foodlist">
-      ${day.foods.length === 0
-        ? `<div class="emptymsg">まだ記録がありません。写真か一言でどうぞ。</div>`
-        : day.foods.map((f, i) => `
+      ${(() => {
+        // 食事と食後運動を同じ時間軸に交ぜて表示（血糖は時系列の現象のため）。時刻なしは末尾
+        const tmin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ""); return m ? Number(m[1]) * 60 + Number(m[2]) : Infinity; };
+        const rows = day.foods.map((f, i) => ({ o: "f", t: f.t, i, f }))
+          .concat((day.moves || []).map((mv, i) => ({ o: "m", t: mv.t, i, mv })));
+        if (!rows.length) return `<div class="emptymsg">まだ記録がありません。写真か一言でどうぞ。</div>`;
+        rows.sort((a, b) => tmin(a.t) - tmin(b.t));
+        return rows.map((r) => r.o === "f" ? `
           <div class="foodrow">
-            <button class="timechip mono" data-ftime="${i}" title="タップで時刻を修正">${f.t ? esc(f.t) : "--:--"}</button>
-            <div class="foodname"><span class="nm">${esc(f.name)}</span><span class="badges">${f.veg?"🥬":""}${f.omega3?"🐟":""}${f.fiber?"🌾":""}</span></div>
+            <button class="timechip mono" data-ftime="${r.i}" title="タップで時刻を修正">${r.f.t ? esc(r.f.t) : "--:--"}</button>
+            <div class="foodname"><span class="nm">${esc(r.f.name)}</span><span class="badges">${r.f.veg?"🥬":""}${r.f.omega3?"🐟":""}${r.f.fiber?"🌾":""}</span></div>
             <div class="foodnums">
-              <span class="mono" style="color:var(--ice);font-size:17px">${f.p}<small style="color:var(--muted)">P</small></span>
-              <span class="mono" style="color:var(--muted);font-size:15px">${f.c ?? 0}<small>C</small></span>
-              <button class="delbtn" data-del="${i}">🗑</button>
+              <span class="mono" style="color:var(--ice);font-size:17px">${r.f.p}<small style="color:var(--muted)">P</small></span>
+              <span class="mono" style="color:var(--muted);font-size:15px">${r.f.c ?? 0}<small>C</small></span>
+              <button class="delbtn" data-del="${r.i}">🗑</button>
             </div>
-          </div>`).join("")}
+          </div>` : `
+          <div class="foodrow">
+            <button class="timechip mono" data-mtime="${r.i}" title="タップで時刻を修正">${r.mv.t ? esc(r.mv.t) : "--:--"}</button>
+            <div class="foodname"><span class="nm" style="color:var(--ice)">${r.mv.kind === "squat" ? "💪 スクワット" : "🚶 散歩"}<small style="color:var(--muted)"> ${r.mv.min}分</small></span></div>
+            <div class="foodnums"><button class="delbtn" data-mdel="${r.i}">🗑</button></div>
+          </div>`).join("");
+      })()}
+    </div>
+    <div class="movechips">
+      <span class="mclabel">🚶 食後の運動</span>
+      <button class="mchip" data-movechip="walk:10">10分</button>
+      <button class="mchip" data-movechip="walk:15">15分</button>
+      <button class="mchip" data-movechip="walk:30">30分</button>
+      <button class="mchip" data-movechip="squat:3">💪 スクワット</button>
     </div>
 
     ${day.foods.length ? `
@@ -1310,6 +1339,34 @@ function bindEvents() {
     }));
 
   const bk = $("[data-bakao]"); if (bk) bk.addEventListener("click", getBakao);
+
+  document.querySelectorAll("[data-movechip]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const [kind, min] = b.dataset.movechip.split(":");
+      const key = toKey(cursor);
+      const day = getDay(key);
+      // 時刻は今日なら現在時刻、過去日はnull（原則8：時刻を捏造しない）
+      const t = toKey(new Date()) === key ? new Date().toTimeString().slice(0, 5) : null;
+      updateDay(key, { moves: (day.moves || []).concat({ kind, min: Number(min), t }) });
+    }));
+  document.querySelectorAll("[data-mdel]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const key = toKey(cursor);
+      const day = getDay(key);
+      updateDay(key, { moves: (day.moves || []).filter((_, i) => i !== Number(b.dataset.mdel)) });
+    }));
+  document.querySelectorAll("[data-mtime]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const i = Number(b.dataset.mtime);
+      const key = toKey(cursor);
+      const day = getDay(key);
+      const cur = (day.moves && day.moves[i] && day.moves[i].t) || "";
+      const v = prompt("運動した時刻（例 13:10）。空欄で時刻なしに戻します。", cur);
+      if (v === null) return;
+      const t = v.trim() === "" ? null : validHHMM(v);
+      if (v.trim() !== "" && !t) { alert("HH:MM形式で入力してください（例 8:05、13:10）"); return; }
+      updateDay(key, { moves: (day.moves || []).map((m, idx) => idx === i ? Object.assign({}, m, { t }) : m) });
+    }));
 
   document.querySelectorAll("[data-field]").forEach((inp) =>
     inp.addEventListener("change", () => {
