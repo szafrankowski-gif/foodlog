@@ -781,6 +781,8 @@ function bgMeals(cfg, day) {
     groups.get(f.t).foods.push(f);
   }
   const moves = (day.moves || []).map((mv) => ({ kind: mv.kind, dur: Number(mv.min) || 0, m: lateMin(bgTmin(mv.t)) })).filter((mv) => mv.m != null);
+  // 筋トレ（trainA/B）の実施時刻：直後2時間以内の食事に「筋トレ済み」補正（係数cfg.ex.trainが登録されているときのみ）
+  const trains = ["trainA", "trainB"].map((a) => lateMin(bgTmin((day.actTimes || {})[a]))).filter((m) => m != null);
   const typeCoef = (name) => {
     for (const t of cfg.mtype) { try { if (t.kw && new RegExp(t.kw).test(name || "")) return Number(t.coef) || 1; } catch (e) {} }
     return Number(cfg.mtype[cfg.mtype.length - 1].coef) || 1; // 末尾＝「その他」
@@ -791,6 +793,9 @@ function bgMeals(cfg, day) {
       if (mv.m < mealMin || mv.m > mealMin + 90) continue; // 食後90分以内の運動に適用
       const c = mv.kind === "squat" ? cfg.ex.squat : mv.dur >= 30 ? cfg.ex.walk30 : cfg.ex.walk10;
       if (Number(c) && c < coef) coef = Number(c);
+    }
+    if (Number(cfg.ex.train)) for (const tm of trains) {
+      if (mealMin - tm >= 0 && mealMin - tm <= 120 && Number(cfg.ex.train) < coef) coef = Number(cfg.ex.train);
     }
     return coef;
   };
@@ -807,7 +812,7 @@ function bgMeals(cfg, day) {
     const rise = Math.max(3, C * fc * hourCoef(Math.floor(g.min / 60)) * pcr * sl * exCoef(g.min));
     return { min: g.min, rise };
   });
-  return { meals, moves };
+  return { meals, moves, trains };
 }
 function bgShape(tau, R) {
   if (tau < 0 || tau >= BG_RISE + BG_FALL) return 0;
@@ -815,7 +820,7 @@ function bgShape(tau, R) {
   return R * (1 + Math.cos(Math.PI * (tau - BG_RISE) / BG_FALL)) / 2;
 }
 function bgCurveSvg(cfg, day) {
-  const { meals, moves } = bgMeals(cfg, day);
+  const { meals, moves, trains } = bgMeals(cfg, day);
   if (!meals.length) return null;
   const base = Number(cfg.base) || 95;
   const start = Math.max(0, Math.min(meals[0].min - 60, 360));
@@ -842,6 +847,7 @@ function bgCurveSvg(cfg, day) {
     <path d="${path}" fill="none" stroke="#5FC9DE" stroke-width="2" stroke-linejoin="round"/>
     ${meals.map((m) => `<circle cx="${x(m.min).toFixed(1)}" cy="${y(pts.find((p) => p.m >= m.min).v).toFixed(1)}" r="2.6" fill="#0E141A" stroke="#5FC9DE" stroke-width="1.4"/>`).join("")}
     ${moves.filter((mv) => mv.m >= start).map((mv) => `<text x="${x(mv.m).toFixed(1)}" y="${T+8}" font-size="13" text-anchor="middle">${mv.kind === "squat" ? "💪" : "🚶"}</text>`).join("")}
+    ${trains.filter((tm) => tm >= start).map((tm) => `<text x="${x(tm).toFixed(1)}" y="${T+8}" font-size="13" text-anchor="middle">💪</text>`).join("")}
     ${pm.v > base + 5 ? `<circle cx="${x(pm.m).toFixed(1)}" cy="${y(pm.v).toFixed(1)}" r="3" fill="#5FC9DE"/><text x="${x(pm.m).toFixed(1)}" y="${(y(pm.v)-6).toFixed(1)}" fill="#E9EEF2" font-size="15" font-weight="700" text-anchor="middle">${Math.round(pm.v)}</text>` : ""}
   </svg>` };
 }
@@ -1074,10 +1080,12 @@ function renderLog() {
 
     <div class="foodlist">
       ${(() => {
-        // 食事と食後運動を同じ時間軸に交ぜて表示（血糖は時系列の現象のため）。時刻なしは末尾・深夜0〜3時はその日の最後
+        // 食事・食後運動・実績トグルの運動を同じ時間軸に交ぜて表示（血糖は時系列の現象のため）。時刻なしは末尾・深夜0〜3時はその日の最後
         const tmin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ""); return m ? lateMin(Number(m[1]) * 60 + Number(m[2])) : Infinity; };
+        const ACT_ICON = { trainA: "💪", trainB: "💪", climb: "🧗", jiujitsu: "🥋", mountain: "⛰", aerobic: "🏃" };
         const rows = day.foods.map((f, i) => ({ o: "f", t: f.t, i, f }))
-          .concat((day.moves || []).map((mv, i) => ({ o: "m", t: mv.t, i, mv })));
+          .concat((day.moves || []).map((mv, i) => ({ o: "m", t: mv.t, i, mv })))
+          .concat(dayActs(day).map((a) => ({ o: "a", t: (day.actTimes || {})[a] ?? null, a })));
         if (!rows.length) return `<div class="emptymsg">まだ記録がありません。写真か一言でどうぞ。</div>`;
         rows.sort((a, b) => tmin(a.t) - tmin(b.t));
         return rows.map((r) => r.o === "f" ? `
@@ -1089,11 +1097,16 @@ function renderLog() {
               <span class="mono" style="color:var(--muted);font-size:15px">${r.f.c ?? 0}<small>C</small></span>
               <button class="delbtn" data-del="${r.i}">🗑</button>
             </div>
-          </div>` : `
+          </div>` : r.o === "m" ? `
           <div class="foodrow">
             <button class="timechip mono" data-mtime="${r.i}" title="タップで時刻を修正">${r.mv.t ? esc(r.mv.t) : "--:--"}</button>
             <div class="foodname"><span class="nm" style="color:var(--ice)">${r.mv.kind === "squat" ? "💪 スクワット" : "🚶 散歩"}<small style="color:var(--muted)"> ${r.mv.min}分</small></span></div>
             <div class="foodnums"><button class="delbtn" data-mdel="${r.i}">🗑</button></div>
+          </div>` : `
+          <div class="foodrow">
+            <button class="timechip mono" data-atime="${r.a}" title="タップで時刻を修正">${r.t ? esc(r.t) : "--:--"}</button>
+            <div class="foodname"><span class="nm" style="color:${r.a === "aerobic" ? "var(--ice)" : "var(--amber)"}">${ACT_ICON[r.a] || "🏃"} ${DAY_LABEL[r.a] || r.a}</span></div>
+            <div class="foodnums"></div>
           </div>`).join("");
       })()}
     </div>
@@ -1466,7 +1479,11 @@ function bindEvents() {
       const cur = dayActs(day);
       const acts = cur.includes(a) ? cur.filter((x) => x !== a) : cur.concat(a);
       if (!cur.includes(a) && MENU[a]) menuOpen = true; // トレ日ONで今日のメニューを自動展開
-      updateDay(key, { acts, comment: null });
+      // タイムライン配置用の時刻：今日ONにした瞬間を自動記録（過去日はnull＝時刻を捏造しない。OFFで削除）
+      const at = Object.assign({}, day.actTimes || {});
+      if (cur.includes(a)) delete at[a];
+      else at[a] = toKey(logicalToday()) === key ? new Date().toTimeString().slice(0, 5) : null;
+      updateDay(key, { acts, actTimes: at, comment: null });
     }));
 
   document.querySelectorAll("[data-menutoggle]").forEach((b) =>
@@ -1556,6 +1573,18 @@ function bindEvents() {
       const t = v.trim() === "" ? null : validHHMM(v);
       if (v.trim() !== "" && !t) { alert("HH:MM形式で入力してください（例 8:05、13:10）"); return; }
       updateDay(key, { moves: (day.moves || []).map((m, idx) => idx === i ? Object.assign({}, m, { t }) : m) });
+    }));
+  document.querySelectorAll("[data-atime]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const a = b.dataset.atime;
+      const key = toKey(cursor);
+      const day = getDay(key);
+      const cur = ((day.actTimes || {})[a]) || "";
+      const v = prompt("実施した時刻（例 20:00）。空欄で時刻なしに戻します。", cur);
+      if (v === null) return;
+      const t = v.trim() === "" ? null : validHHMM(v);
+      if (v.trim() !== "" && !t) { alert("HH:MM形式で入力してください（例 8:05、20:00）"); return; }
+      updateDay(key, { actTimes: Object.assign({}, day.actTimes || {}, { [a]: t }) });
     }));
 
   document.querySelectorAll("[data-field]").forEach((inp) =>
