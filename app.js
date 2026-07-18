@@ -136,9 +136,15 @@ const SEED = {
 };
 
 // ---------- 状態 ----------
+// 1日の区切り＝就寝予定(2:30)+30分＝3:00。0:00〜2:59の記録は「前日の夜」の扱い（夜型の生活実態に合わせる）
+const DAY_END_MIN = 180;
+function logicalToday() { const d = new Date(); if (d.getHours() * 60 + d.getMinutes() < DAY_END_MIN) d.setDate(d.getDate() - 1); return d; }
+// 深夜0:00〜2:59の時刻は同日タイムライン上で末尾に並べるため+24h扱いにする
+const lateMin = (min) => min != null && min < DAY_END_MIN ? min + 1440 : min;
+
 let data = {};
 let view = "log";        // log | review | settings
-let cursor = new Date();
+let cursor = logicalToday();
 let range = 14;
 let busy = false, commentBusy = false;
 let errMsg = "", setMsg = "";
@@ -401,7 +407,7 @@ async function fetchBakao(key) {
   const foodList = day.foods.map((f) => `${f.t ? f.t + " " : ""}${f.name}(P${f.p}${f.c != null ? "/C" + f.c : ""})`).join("、");
   const [y, m, d] = key.split("-").map(Number);
   const dateLabel = fmtJP(new Date(y, m - 1, d));
-  const isToday = toKey(new Date()) === key;
+  const isToday = toKey(logicalToday()) === key;
   const now = new Date(), hh = now.getHours(), mm = pad(now.getMinutes());
   const phase = !isToday ? "past"
     : (hh >= 3 && hh < 12) ? "morning"
@@ -536,8 +542,8 @@ function download(filename, content, type) {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-const exportCsv = () => download(`mealog_${toKey(new Date())}.csv`, "\uFEFF" + buildCsv(), "text/csv;charset=utf-8");
-const exportJson = () => download(`mealog_backup_${toKey(new Date())}.json`, JSON.stringify(data, null, 2), "application/json");
+const exportCsv = () => download(`mealog_${toKey(logicalToday())}.csv`, "\uFEFF" + buildCsv(), "text/csv;charset=utf-8");
+const exportJson = () => download(`mealog_backup_${toKey(logicalToday())}.json`, JSON.stringify(data, null, 2), "application/json");
 function importJson(file) {
   const r = new FileReader();
   r.onload = () => {
@@ -561,7 +567,7 @@ function importJson(file) {
 const nowHHMM = () => { const d = new Date(); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const validHHMM = (s) => typeof s === "string" && /^([01]?\d|2[0-3]):[0-5]\d$/.test(s.trim()) ? s.trim() : null;
 function stampFoods(items, key, fileTime) {
-  const isToday = toKey(new Date()) === key;
+  const isToday = toKey(logicalToday()) === key;
   return items.map((f) => {
     let t = validHHMM(f.t);
     if (!t && fileTime) t = fileTime;
@@ -664,7 +670,7 @@ async function submitText() {
   if (local) {
     const key = toKey(cursor);
     const day = getDay(key);
-    const stamp = toKey(new Date()) === key ? new Date().toTimeString().slice(0, 5) : null;
+    const stamp = toKey(logicalToday()) === key ? new Date().toTimeString().slice(0, 5) : null;
     inputText = ""; errMsg = "";
     const patch = Object.assign({}, local.patch);
     if (local.moves.length) patch.moves = (day.moves || []).concat(local.moves.map((mv) => Object.assign({}, mv, { t: stamp })));
@@ -769,12 +775,12 @@ function bgTmin(t) { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ""); return m ? N
 function bgMeals(cfg, day) {
   const groups = new Map();
   for (const f of day.foods || []) {
-    const min = bgTmin(f.t);
+    const min = lateMin(bgTmin(f.t)); // 深夜0〜3時はその日の夜の続き（+24h）として扱う
     if (min == null) continue;
     if (!groups.has(f.t)) groups.set(f.t, { t: f.t, min, foods: [] });
     groups.get(f.t).foods.push(f);
   }
-  const moves = (day.moves || []).map((mv) => ({ kind: mv.kind, dur: Number(mv.min) || 0, m: bgTmin(mv.t) })).filter((mv) => mv.m != null);
+  const moves = (day.moves || []).map((mv) => ({ kind: mv.kind, dur: Number(mv.min) || 0, m: lateMin(bgTmin(mv.t)) })).filter((mv) => mv.m != null);
   const typeCoef = (name) => {
     for (const t of cfg.mtype) { try { if (t.kw && new RegExp(t.kw).test(name || "")) return Number(t.coef) || 1; } catch (e) {} }
     return Number(cfg.mtype[cfg.mtype.length - 1].coef) || 1; // 末尾＝「その他」
@@ -813,8 +819,10 @@ function bgCurveSvg(cfg, day) {
   if (!meals.length) return null;
   const base = Number(cfg.base) || 95;
   const start = Math.max(0, Math.min(meals[0].min - 60, 360));
+  // 深夜（0〜3時＝+24h扱い）の食事があれば軸を27時（=翌3時）まで延長
+  const end = Math.min(1440 + DAY_END_MIN, Math.max(1440, ...meals.map((m) => m.min + BG_RISE + BG_FALL)));
   const pts = [];
-  for (let m = start; m <= 1440; m += 5) {
+  for (let m = start; m <= end; m += 5) {
     let v = base;
     for (const meal of meals) v += bgShape(m - meal.min, meal.rise);
     pts.push({ m, v });
@@ -822,12 +830,12 @@ function bgCurveSvg(cfg, day) {
   let pm = pts[0]; for (const p of pts) if (p.v > pm.v) pm = p;
   const W = 448, H = 168, L = 32, R = 6, T = 12, B = 24;
   const maxV = Math.max(200, pm.v) + 12, minV = base - 16;
-  const x = (m) => L + (m - start) / (1440 - start) * (W - L - R);
+  const x = (m) => L + (m - start) / (end - start) * (W - L - R);
   const y = (v) => T + (maxV - v) / (maxV - minV) * (H - T - B);
   const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.m).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
-  const ticks = []; for (let h = Math.ceil(start / 180) * 3; h <= 24; h += 3) ticks.push(h);
+  const ticks = []; for (let h = Math.ceil(start / 180) * 3; h <= end / 60; h += 3) ticks.push(h);
   return { peak: Math.round(pm.v), svg: `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="血糖予測カーブ">
-    ${ticks.map((h) => `<line x1="${x(h*60).toFixed(1)}" y1="${T}" x2="${x(h*60).toFixed(1)}" y2="${H-B}" stroke="#2E3E4C" stroke-width=".5" opacity=".5"/><text x="${x(h*60).toFixed(1)}" y="${H-B+12}" fill="#8598A6" font-size="13" text-anchor="middle">${h}時</text>`).join("")}
+    ${ticks.map((h) => `<line x1="${x(h*60).toFixed(1)}" y1="${T}" x2="${x(h*60).toFixed(1)}" y2="${H-B}" stroke="#2E3E4C" stroke-width=".5" opacity=".5"/><text x="${x(h*60).toFixed(1)}" y="${H-B+12}" fill="#8598A6" font-size="13" text-anchor="middle">${h > 24 ? h - 24 : h}時</text>`).join("")}
     <line x1="${L}" y1="${y(base).toFixed(1)}" x2="${W-R}" y2="${y(base).toFixed(1)}" stroke="#8598A6" stroke-width=".6" stroke-dasharray="2 4" opacity=".7"/>
     <line x1="${L}" y1="${y(140).toFixed(1)}" x2="${W-R}" y2="${y(140).toFixed(1)}" stroke="#F0B458" stroke-width=".6" stroke-dasharray="4 4" opacity=".7"/><text x="${L-3}" y="${(y(140)+3).toFixed(1)}" fill="#F0B458" font-size="13" text-anchor="end">140</text>
     <line x1="${L}" y1="${y(180).toFixed(1)}" x2="${W-R}" y2="${y(180).toFixed(1)}" stroke="#E08C8C" stroke-width=".6" stroke-dasharray="4 4" opacity=".8"/><text x="${L-3}" y="${(y(180)+3).toFixed(1)}" fill="#E08C8C" font-size="13" text-anchor="end">180</text>
@@ -894,7 +902,7 @@ function renderLog() {
   const total = sumP(day), carbs = sumC(day);
   const active = isActiveDay(day);
   const target = active ? CEILING : FLOOR;
-  const isToday = toKey(new Date()) === key;
+  const isToday = toKey(logicalToday()) === key;
   const hitFloor = total >= FLOOR, hitCeil = total >= CEILING;
   // 120g到達もgreen（amberは注意・境界系に一本化。「120gは超えても問題ない」思想と色を揃え、到達は✓で伝える）
   const barColor = hitFloor ? "var(--green)" : "var(--ice)";
@@ -1066,8 +1074,8 @@ function renderLog() {
 
     <div class="foodlist">
       ${(() => {
-        // 食事と食後運動を同じ時間軸に交ぜて表示（血糖は時系列の現象のため）。時刻なしは末尾
-        const tmin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ""); return m ? Number(m[1]) * 60 + Number(m[2]) : Infinity; };
+        // 食事と食後運動を同じ時間軸に交ぜて表示（血糖は時系列の現象のため）。時刻なしは末尾・深夜0〜3時はその日の最後
+        const tmin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ""); return m ? lateMin(Number(m[1]) * 60 + Number(m[2])) : Infinity; };
         const rows = day.foods.map((f, i) => ({ o: "f", t: f.t, i, f }))
           .concat((day.moves || []).map((mv, i) => ({ o: "m", t: mv.t, i, mv })));
         if (!rows.length) return `<div class="emptymsg">まだ記録がありません。写真か一言でどうぞ。</div>`;
@@ -1198,7 +1206,7 @@ function renderLog() {
 }
 
 function renderReview() {
-  const today = new Date();
+  const today = logicalToday();
   const days = [];
   for (let i = range - 1; i >= 0; i--) {
     const d = new Date(today); d.setDate(d.getDate() - i);
@@ -1448,7 +1456,7 @@ function bindEvents() {
 
   document.querySelectorAll("[data-move]").forEach((b) =>
     b.addEventListener("click", () => { const d = new Date(cursor); d.setDate(d.getDate() + Number(b.dataset.move)); cursor = d; errMsg = ""; render(); }));
-  const tb = $("[data-today]"); if (tb) tb.addEventListener("click", () => { cursor = new Date(); render(); });
+  const tb = $("[data-today]"); if (tb) tb.addEventListener("click", () => { cursor = logicalToday(); render(); });
 
   document.querySelectorAll("[data-act]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -1528,7 +1536,7 @@ function bindEvents() {
       const key = toKey(cursor);
       const day = getDay(key);
       // 時刻は今日なら現在時刻、過去日はnull（原則8：時刻を捏造しない）
-      const t = toKey(new Date()) === key ? new Date().toTimeString().slice(0, 5) : null;
+      const t = toKey(logicalToday()) === key ? new Date().toTimeString().slice(0, 5) : null;
       updateDay(key, { moves: (day.moves || []).concat({ kind, min: Number(min), t }) });
     }));
   document.querySelectorAll("[data-mdel]").forEach((b) =>
@@ -1686,7 +1694,7 @@ window.addEventListener("online", () => schedulePush());
 window.matchMedia("(min-width: 900px)").addEventListener("change", () => render());
 // データのある最新日か今日のうち、新しい方を開く
 (() => {
-  const todayKey = toKey(new Date());
+  const todayKey = toKey(logicalToday());
   const dated = Object.keys(data).filter((k) => (data[k].foods || []).length).sort();
   const latest = dated[dated.length - 1];
   if (latest && latest > todayKey) {
