@@ -390,7 +390,8 @@ function renderLog() {
                 </div>`).join("");
             }).join("") + ((day.moves || []).length ? `<div class="slothead">運動</div>` + day.moves.map((m, i) => `
                 <div class="foodrow">
-                  <div class="foodname"><span class="nm" style="color:var(--rose)">${m.kind === "pilates" ? "🧘 ピラティス" : m.kind === "dumbbell" ? "💪 ダンベル" : `🚶 散歩 ${m.min}分`}</span></div>
+                  <button class="timechip mono ${m.t ? "set" : ""}" data-mvtime="${i}" title="タップで時刻を記録（血糖の答え合わせ用・任意）">${m.t ? esc(m.t) : "--:--"}</button>
+                  <div class="foodname"><span class="nm" style="color:var(--rose-text)">${m.kind === "pilates" ? "🧘 ピラティス" : m.kind === "dumbbell" ? "💪 ダンベル" : `🚶 散歩 ${m.min}分`}</span></div>
                   <div class="foodnums"><button class="delbtn" data-mdel="${i}">🗑</button></div>
                 </div>`).join("") : "")}
       </div>
@@ -506,7 +507,7 @@ function ykLineChart(days, field, color, target) {
 }
 function buildCsv() {
   const keys = Object.keys(data).sort();
-  const rows = ["date,protein_g,fiber_g,soluble_fiber_g,kcal,satfat_g,weight_kg,fatpct,fatigue,foods"];
+  const rows = ["date,protein_g,fiber_g,soluble_fiber_g,kcal,satfat_g,weight_kg,fatpct,fatigue,foods,moves"];
   for (const k of keys) {
     const dd = data[k];
     if (!dd) continue;
@@ -516,6 +517,7 @@ function buildCsv() {
       fs.reduce((a, f) => a + num(f.sfiber), 0), Math.round(fs.reduce((a, f) => a + num(f.kcal), 0)),
       fs.reduce((a, f) => a + num(f.satfat), 0), dd.weight ?? "", dd.fatpct ?? "", dd.fatigue ?? "",
       '"' + fs.map((f) => `${SLOT_LABEL[f.slot] || ""}${f.t ? "(" + f.t + ")" : ""}:${String(f.name).replace(/"/g, "")}`).join("・") + '"',
+      '"' + (dd.moves || []).map((m) => `${m.kind === "pilates" ? "ピラティス" : m.kind === "dumbbell" ? "ダンベル" : "散歩" + m.min + "分"}${m.t ? "(" + m.t + ")" : ""}`).join("・") + '"',
     ].join(","));
   }
   return rows.join("\n");
@@ -726,7 +728,19 @@ function bindEvents() {
     b.addEventListener("click", () => {
       const [kind, min] = b.dataset.movechip.split(":");
       const key = toKey(cursor);
-      updateDay(key, { moves: (getDay(key).moves || []).concat({ kind, min: Number(min) }) });
+      const t = toKey(new Date()) === key ? `${pad(new Date().getHours())}:${pad(new Date().getMinutes())}` : null;
+      updateDay(key, { moves: (getDay(key).moves || []).concat({ kind, min: Number(min), t }) });
+    }));
+  document.querySelectorAll("[data-mvtime]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const i = Number(b.dataset.mvtime);
+      const key = toKey(cursor);
+      const day = getDay(key);
+      const v = prompt("運動した時刻（例 13:10）。空欄で時刻なしに戻します。", (day.moves[i] || {}).t || "");
+      if (v === null) return;
+      const t = v.trim() === "" ? null : validHHMM(v);
+      if (v.trim() !== "" && !t) { alert("HH:MM形式で入力してください（例 8:05、13:10）"); return; }
+      updateDay(key, { moves: day.moves.map((m, idx) => idx === i ? Object.assign({}, m, { t }) : m) });
     }));
   document.querySelectorAll("[data-fatigue]").forEach((b) =>
     b.addEventListener("click", () => {
