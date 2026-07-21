@@ -1,4 +1,4 @@
-/* foodlog-M v1 — 増量を支える食事ログ（既存foodlogの派生・別プロファイル）｜更新: 2026-07-21 */
+/* foodlog-YK v1 — 増量を支える食事ログ（既存foodlogの派生・別プロファイル）｜更新: 2026-07-21 */
 /* 設計制約：摂取エネルギーは下限のみ扱う（上限の概念を画面に出さない）。未達を責める文言・
    警告色（赤・オレンジ）・体重減少を肯定する表示は実装しない。数値は隠さない。 */
 "use strict";
@@ -457,7 +457,7 @@ function renderSettings() {
       <div class="card setbox">
         <div class="settitle">ℹ️ このアプリについて</div>
         <div class="setdesc">
-          foodlog M — しっかり食べて、少しずつ増やすための食事ログ。<br>
+          foodlog YK — しっかり食べて、少しずつ増やすための食事ログ。<br>
           記録は1日2〜3分でOK。単語だけの入力（例：豆腐、蕎麦、鮭）で栄養を自動計算します。<br>
           エネルギーとたんぱく質は「届いたら緑」。届かない日があっても大丈夫、翌日に足せば十分です。<br>
           データ保存：この端末＋（設定時のみ）あなたのGitHub秘密Gist。それ以外の外部には送信しません。
@@ -556,7 +556,7 @@ function bindEvents() {
   const ex = $("[data-exportjson]"); if (ex) ex.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = `foodlogM_backup_${toKey(new Date())}.json`; a.click();
+    a.href = URL.createObjectURL(blob); a.download = `foodlogYK_backup_${toKey(new Date())}.json`; a.click();
   });
   const im = $("[data-importjson]"); if (im) im.addEventListener("click", () => $("#importInput").click());
 }
@@ -620,7 +620,7 @@ async function syncPush() {
     if (res.status === 404) { localStorage.removeItem(GIST_ID_KEY); id = ""; }
   }
   if (!id) {
-    res = await ghApi("/gists", { method: "POST", body: JSON.stringify({ public: false, description: "foodlog-M data (auto-sync)", files: { [GIST_FILE]: { content } } }) });
+    res = await ghApi("/gists", { method: "POST", body: JSON.stringify({ public: false, description: "foodlog-YK data (auto-sync)", files: { [GIST_FILE]: { content } } }) });
     if (res.ok) { const g = await res.json(); if (g.id) localStorage.setItem(GIST_ID_KEY, g.id); }
   }
   if (!res || !res.ok) throw new Error("gist push " + (res ? res.status : "?"));
