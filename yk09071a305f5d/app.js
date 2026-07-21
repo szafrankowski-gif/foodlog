@@ -12,6 +12,7 @@ const LAST_SYNC_KEY = "mealogM:lastsync";
 const PROTECT_KEY = "mealogM:protect";
 const GIST_FILE = "foodlog-m-data.json";
 const MODEL_ESTIMATE = "claude-haiku-4-5-20251001";
+const MODEL_COMMENT = "claude-sonnet-4-6"; // きょうのひとこと（文章の質重視）
 
 const SLOTS = [["morning", "朝"], ["noon", "昼"], ["snack", "間食"], ["night", "夜"]];
 const SLOT_LABEL = Object.fromEntries(SLOTS);
@@ -60,7 +61,7 @@ let range = 14; // 振り返りの期間（日）
 let cursor = new Date();
 let inputText = "";
 let slotSel = null, slotSelKey = null; // 区分の手動選択は当日限り（翌日に残留させない）
-let busy = false;
+let busy = false, commentBusy = false;
 let errMsg = "", setMsg = "";
 let syncState = "off";
 let syncReady = true;
@@ -269,6 +270,42 @@ async function submitText() {
   } finally { busy = false; render(); }
 }
 
+// ---------- きょうのひとこと（AIコメント。褒め最優先のトーンを厳守） ----------
+async function getComment() {
+  if (commentBusy) return;
+  if (!apiKey()) { errMsg = "ひとことをもらうには設定タブでAPIキーの登録が必要です。"; render(); return; }
+  commentBusy = true; errMsg = ""; render();
+  try {
+    const key = toKey(cursor);
+    const day = getDay(key);
+    const c = cfg();
+    const guard = protectActive(toKey(new Date()));
+    const P = Math.round(sumF(day, "p")), FI = Math.round(sumF(day, "fiber") * 10) / 10, K = Math.round(sumF(day, "kcal"));
+    const foods = day.foods.map((f) => `${SLOT_LABEL[f.slot] || ""}:${f.name}`).join("、");
+    const moves = (day.moves || []).map((m) => m.kind === "pilates" ? "ピラティス" : m.kind === "dumbbell" ? "ダンベル" : `散歩${m.min}分`).join("、");
+    const raw = await callApi({
+      model: MODEL_COMMENT, max_tokens: 300,
+      messages: [{ role: "user", content:
+`あなたは、しっかり食べて少しずつ体重を増やしたい人を支える、あたたかい栄養コーチです。今日の記録に2〜3文の短いひとことを返してください。
+
+今日の記録：${foods || "（食事の記録はまだありません）"}
+運動：${moves || "なし"}
+合計：たんぱく質${P}g${c.pTarget ? `（目標${c.pTarget}g）` : ""}、食物繊維${FI}g${c.fiberTarget ? `（目標${c.fiberTarget}g）` : ""}、エネルギー${K}kcal${c.kcalFloor ? `（下限${c.kcalFloor}kcal）` : ""}
+${guard ? "今週は「守りの週」：目標の話はせず、記録できたこと自体を静かにねぎらうこと。" : ""}
+
+書き方（厳守）：
+- まず、できていることを具体的に1つ褒める。小さなことでよい
+- 届いていない数字を責めない・並べ立てない。触れる場合は「あと◯◯を足せると理想的」のような足す提案を最大1つだけ
+- 食べる量を少なくする方向の言葉・我慢や制限をすすめる言葉は絶対に使わない。エネルギーは多いほど良い前提で書く
+- 血糖の話はしない
+- 絵文字は使っても1つ。敬体で、押しつけがましくなく`}],
+    });
+    updateDay(key, { comment: raw.trim() });
+  } catch (e) {
+    errMsg = "ひとことの取得がうまくいきませんでした。通信を確認して、もう一度どうぞ。";
+  } finally { commentBusy = false; render(); }
+}
+
 // ---------- 描画 ----------
 // 今週の食べ物・運動リスト（できた日を数えるだけ・月曜始まり）。記録タブと振り返りで共用
 const RHYTHM_DEF = [
@@ -396,6 +433,17 @@ function renderLog() {
                 </div>`).join("") : "")}
       </div>
     </div>
+
+    ${day.foods.length ? `
+    <div class="section" style="padding-top:10px">
+      ${day.comment ? `
+      <div class="card" style="padding:12px 14px;background:var(--tint-green);border-color:rgba(76,158,99,.25)">
+        <div style="font-size:11.5px;color:var(--green);font-weight:700;margin-bottom:4px">🍊 きょうのひとこと</div>
+        <div style="font-size:13.5px;line-height:1.7">${esc(day.comment)}</div>
+        <button class="btn-s" data-comment ${commentBusy ? "disabled" : ""} style="margin-top:8px">${commentBusy ? '<span class="spin">◐</span> 更新中…' : "更新"}</button>
+      </div>` : `
+      <button class="btn-s" data-comment ${commentBusy ? "disabled" : ""} style="width:100%;justify-content:center;height:40px">${commentBusy ? '<span class="spin">◐</span> 書いています…' : "💬 きょうのひとこと をもらう"}</button>`}
+    </div>` : ""}
 
     <div class="movechips">
       <span class="mclabel">🚶 運動</span>
@@ -755,6 +803,7 @@ function bindEvents() {
       updateDay(toKey(cursor), { [inp.dataset.field]: v || null });
     }));
 
+  const cm = $("[data-comment]"); if (cm) cm.addEventListener("click", getComment);
   const pj = $("[data-pacejump]"); if (pj) pj.addEventListener("click", () => {
     const el = document.querySelector(".rhythmbox");
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
