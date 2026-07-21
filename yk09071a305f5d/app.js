@@ -15,6 +15,11 @@ const MODEL_ESTIMATE = "claude-haiku-4-5-20251001";
 
 const SLOTS = [["morning", "朝"], ["noon", "昼"], ["snack", "間食"], ["night", "夜"]];
 const SLOT_LABEL = Object.fromEntries(SLOTS);
+// 区分の代表時刻（設定で変更可）。個別時刻tがない食事はこの時刻として血糖の較正・シミュレーションに使う
+const SLOT_TIME_DEFAULT = { morning: "08:00", noon: "12:30", snack: "15:30", night: "19:30" };
+const slotTime = (slot) => (cfg().slotTimes || {})[slot] || SLOT_TIME_DEFAULT[slot] || "12:00";
+const effTime = (f) => f.t || slotTime(f.slot || "night");
+const validHHMM = (s) => typeof s === "string" && /^([01]?\d|2[0-3]):[0-5]\d$/.test(s.trim()) ? s.trim() : null;
 
 // ---- 初期辞書：Mの常食。量指定なしの単語入力に既定量で応える（一般的な栄養値） ----
 const DICT = [
@@ -375,6 +380,7 @@ function renderLog() {
               if (!fs.length) return "";
               return `<div class="slothead">${SLOT_LABEL[s]}</div>` + fs.map(({ f, i }) => `
                 <div class="foodrow">
+                  <button class="timechip mono ${f.t ? "set" : ""}" data-ftime="${i}" title="タップで時刻を記録（血糖の答え合わせ用・任意）">${esc(effTime(f))}</button>
                   <div class="foodname"><span class="nm">${esc(f.name)}</span><span class="badges">${f.fish?"🐟":""}${f.soy?"🫘":""}${f.nuts?"🥜":""}${f.ginger?"🫚":""}</span></div>
                   <div class="foodnums">
                     <span class="mono" style="color:var(--rose);font-size:14px">${num(f.p)}<small style="color:var(--muted)">P</small></span>
@@ -446,6 +452,14 @@ function renderSettings() {
             ? `<button class="setbtn ghost" data-endprotect>終える</button>`
             : `<button class="setbtn" data-startprotect>今週を守りの週にする</button>`}
         </div>
+      </div>
+
+      <div class="card setbox">
+        <div class="settitle">⏱ 区分の代表時刻</div>
+        <div class="setdesc">個別の時刻を記録しなかった食事は、この時刻に食べたものとしてリブレとの答え合わせ・血糖の計算に使われます。ふだんの食事時刻に合わせておくと精度が上がります（記録の手間は増えません）。</div>
+        ${SLOTS.map(([v, l]) => `<div class="field"><label>${l}</label><input type="time" id="st-${v}" value="${slotTime(v)}"></div>`).join("")}
+        <div class="setrow"><button class="setbtn" data-saveslottimes>保存</button></div>
+        ${setMsg && setMsg.startsWith("代表時刻") ? `<div class="okmsg">${esc(setMsg)}</div>` : ""}
       </div>
 
       <div class="card setbox">
@@ -524,6 +538,18 @@ function bindEvents() {
   document.querySelectorAll("[data-slot]").forEach((b) =>
     b.addEventListener("click", () => { slotSel = b.dataset.slot; slotSelKey = toKey(new Date()); render(); }));
 
+  document.querySelectorAll("[data-ftime]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const i = Number(b.dataset.ftime);
+      const key = toKey(cursor);
+      const day = getDay(key);
+      const f = day.foods[i];
+      const v = prompt("食べた時刻（例 19:45）。空欄で区分の代表時刻（" + slotTime(f.slot) + "）に戻します。", f.t || "");
+      if (v === null) return;
+      const t = v.trim() === "" ? null : validHHMM(v);
+      if (v.trim() !== "" && !t) { alert("HH:MM形式で入力してください（例 8:05、19:45）"); return; }
+      updateDay(key, { foods: day.foods.map((x, idx) => idx === i ? Object.assign({}, x, { t }) : x) });
+    }));
   document.querySelectorAll("[data-del]").forEach((b) =>
     b.addEventListener("click", () => {
       const key = toKey(cursor);
@@ -564,6 +590,12 @@ function bindEvents() {
       obsEnd: g("#c-obsEnd"), ginger: $("#c-ginger").value || null,
     });
     setMsg = "目標を保存しました。"; render();
+  });
+  const st = $("[data-saveslottimes]"); if (st) st.addEventListener("click", () => {
+    const times = {};
+    for (const [v] of SLOTS) { const el = $("#st-" + v); if (el && el.value) times[v] = el.value; }
+    saveCfg({ slotTimes: times });
+    setMsg = "代表時刻を保存しました。"; render();
   });
   const sk = $("[data-savekey]"); if (sk) sk.addEventListener("click", () => {
     const v = $("#apikeyInput").value.trim();
