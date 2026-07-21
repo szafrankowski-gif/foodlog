@@ -270,6 +270,25 @@ async function submitText() {
 }
 
 // ---------- 描画 ----------
+// 今週の食べ物・運動リスト（できた日を数えるだけ・月曜始まり）。記録タブと振り返りで共用
+function rhythmCard(guard) {
+  const wk = weeklyCounts(toKey(new Date()));
+  const rows = [
+    ["🐟 魚", wk.fish, 3], ["🫘 大豆", wk.soy, 6], ["🥜 ナッツ", wk.nuts, 6],
+    ["🫚 生姜", wk.ginger, 6], ["🧘 ピラティス", wk.pilates, 2], ["🚶 散歩", wk.walk, 5],
+  ];
+  return `<div class="card rhythmbox">
+    ${rows.map(([label, v, t]) => {
+      const dots = Array.from({ length: Math.max(guard ? v : t, v) }).map((_, i) =>
+        `<span class="rhydot ${i < v ? "fill" : ""}"></span>`).join("");
+      return `<div class="rhyrow">
+        <span class="rhyname">${label}</span>
+        <div class="rhydots">${dots}</div>
+        <span class="rhystat mono ${!guard && v >= t ? "met" : ""}">${guard ? `${v}日` : v >= t ? `${v}/${t} ✓` : `${v}/${t}`}</span>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
 function gaugeRow(icon, label, val, target, unit, praise, addNote, hideTarget) {
   const met = target != null && val >= target;
   const pct = target ? Math.min(val / target, 1) * 100 : 0;
@@ -306,11 +325,6 @@ function renderLog() {
   const kcalNote = hasFood && c.kcalFloor && K < c.kcalFloor
     ? `下限 ${Number(c.kcalFloor).toLocaleString()} まであと ${(c.kcalFloor - K).toLocaleString()} kcal。${c.kcalFloor - K <= 200 ? "ナッツひとつかみでちょうどです" : "足せると理想的です"}`
     : null;
-
-  const subs = [
-    ["🐟 魚", wk.fish, 3], ["🫘 大豆", wk.soy, 6], ["🥜 ナッツ", wk.nuts, 6],
-    ["🫚 生姜", wk.ginger, 6], ["🧘 ピラティス", wk.pilates, 2], ["🚶 散歩", wk.walk, 5],
-  ];
 
   const slots = ["morning", "noon", "snack", "night"];
   const w2 = lastTwoWeights(key);
@@ -349,8 +363,9 @@ function renderLog() {
       </div>
     </div>
 
-    <div class="subs">
-      ${subs.map(([label, v, t]) => `<span class="sub ${!guard && v >= t ? "met" : ""}">${label} <b class="mono">${v}</b>${guard ? "" : `<span style="opacity:.7">/${t}</span>`}</span>`).join("")}
+    <div class="section" style="padding-top:12px">
+      <div class="seclabel">今週の食べ物・運動</div>
+      ${rhythmCard(guard)}
     </div>
 
     <div class="card wcard">
@@ -507,10 +522,6 @@ function renderReview() {
   const okDays = c.kcalFloor ? logged.filter((d) => d.kcal >= Number(c.kcalFloor)).length : null;
   const wk = weeklyCounts(toKey(new Date()));
   const w7 = weightAvg7(new Date());
-  const rhythm = [
-    ["🐟 魚", wk.fish, 3], ["🫘 大豆", wk.soy, 6], ["🥜 ナッツ", wk.nuts, 6],
-    ["🫚 生姜", wk.ginger, 6], ["🧘 ピラティス", wk.pilates, 2], ["🚶 散歩", wk.walk, 5],
-  ];
   return `
     <div class="rangebtns">
       <button class="btn-s ${range === 14 ? "on" : ""}" data-range="14">2週間</button>
@@ -526,17 +537,7 @@ function renderReview() {
 
     <div class="section">
       <div class="seclabel">今週の食べ物・運動リスト</div>
-      <div class="card rhythmbox">
-        ${rhythm.map(([label, v, t]) => {
-          const dots = Array.from({ length: Math.max(guard ? v : t, v) }).map((_, i) =>
-            `<span class="rhydot ${i < v ? "fill" : ""}"></span>`).join("");
-          return `<div class="rhyrow">
-            <span class="rhyname">${label}</span>
-            <div class="rhydots">${dots}</div>
-            <span class="rhystat mono ${!guard && v >= t ? "met" : ""}">${guard ? `${v}日` : v >= t ? `${v}/${t} ✓` : `${v}/${t}`}</span>
-          </div>`;
-        }).join("")}
-      </div>
+      ${rhythmCard(guard)}
       ${guard ? "" : `<div class="hint" style="margin:6px 0 0">できた日を数えるだけのリストです。月曜から新しい週が始まります。</div>`}
     </div>
 
