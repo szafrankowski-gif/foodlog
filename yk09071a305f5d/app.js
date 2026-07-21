@@ -414,8 +414,9 @@ function renderLog() {
       ${w7 ? `<span style="font-size:12.5px;color:var(--muted)">7日平均 <b class="mono">${w7}</b></span>` : ""}
       <div class="fatline">体脂肪 <input class="mono" data-field="fatpct" inputmode="decimal" placeholder="—" value="${day.fatpct ?? ""}" style="width:56px"> %</div>
     </div>
-    ${!guard && day.weight != null && day.weight !== "" && c.wFloor && Number(day.weight) < Number(c.wFloor)
+    ${day.weight != null && day.weight !== "" && c.wFloor && Number(day.weight) < Number(c.wFloor)
       ? `<div class="wnote low">少し軽めの日です。いつもの食事に、好きなものを1品足せると安心です。</div>` : ""}
+    <!-- 体重下限アラートは仕様5-3により守りの週でも唯一残す安全機能（目標表示とは別扱い） -->
     ${w2 && w2[1] > w2[0] ? `<div class="wnote up">✓ 少しずつ増えています。いい流れです</div>` : ""}
     <!-- 増加の褒めは目標でなく実績の肯定なので、守りの週でも意図的に表示する -->
 
