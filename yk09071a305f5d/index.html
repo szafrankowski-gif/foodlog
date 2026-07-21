@@ -3,19 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#FAF3F4">
+<meta name="theme-color" content="#FDFCFA">
 <title>foodlog YK</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="../icon-192.png">
 <style>
-  /* foodlog-YK：薄いピンク基調のライトテーマ。警告用の赤・オレンジはパレットに置かない（設計制約） */
+  /* foodlog-YK：オレンジ基調のライトテーマ。オレンジはブランド色としてのみ使い、
+     警告・未達の表示には使わない（未達=水色/グレー・達成=緑の意味論を維持） */
   :root {
-    /* 文字色はWCAG AA（4.5:1）を満たす濃さ。ピンクの世界観はティントと塗りが担う */
-    --bg:#FAF3F4; --surface:#FFFFFF; --surface2:#F6E9EC; --line:#EBD8DD; --line-strong:#AD8290;
-    --rose:#C96F8A; --rose-text:#A8506E; --text:#3D3237; --muted:#776069;
+    /* 文字色はWCAG AA（4.5:1）を満たす濃さ。オレンジの世界観はティントと塗りが担う */
+    --bg:#FDFCFA; --surface:#FFFFFF; --surface2:#F5F2EE; --line:#E9E5DF; --line-strong:#B0855B;
+    --rose:#CE7328; --rose-text:#9E551A; --text:#39332C; --muted:#6E675F;
     --green:#3A7A4C; --blue:#47719A;
     --r-s:6px; --r-m:10px; --r-l:14px; --r-full:999px;
-    --tint-rose:rgba(201,111,138,.10); --tint-green:rgba(76,158,99,.10); --tint-blue:rgba(91,143,184,.10);
+    --tint-rose:rgba(206,115,40,.10); --tint-green:rgba(76,158,99,.10); --tint-blue:rgba(91,143,184,.10);
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body {
@@ -49,7 +50,7 @@
     margin:0 16px 10px; padding:10px 14px; border-radius:var(--r-m); font-size:13px;
     background:var(--tint-blue); color:#3E6C90; border:1px solid rgba(91,143,184,.3);
   }
-  .banner.protect { background:var(--tint-rose); color:#A2566E; border-color:rgba(201,111,138,.3); }
+  .banner.protect { background:var(--tint-rose); color:var(--rose-text); border-color:rgba(206,115,40,.3); }
 
   .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--r-l); }
   .section { padding:14px 16px 0; }

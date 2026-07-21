@@ -3,8 +3,8 @@
   "short_name": "foodlog YK",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#FAF3F4",
-  "theme_color": "#FAF3F4",
+  "background_color": "#FDFCFA",
+  "theme_color": "#FDFCFA",
   "icons": [
     { "src": "../icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "../icon-512.png", "sizes": "512x512", "type": "image/png" }

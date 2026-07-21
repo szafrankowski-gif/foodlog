@@ -320,7 +320,7 @@ function renderLog() {
       <button class="navbtn" data-move="1" ${isToday ? "disabled" : ""}>›</button>
     </div>
 
-    ${guard ? `<div class="banner protect">🌸 今週は<b>守りの週</b>です。記録だけで十分。目標は気にしなくて大丈夫です。
+    ${guard ? `<div class="banner protect">🍊 今週は<b>守りの週</b>です。記録だけで十分。目標は気にしなくて大丈夫です。
       <div style="margin-top:6px"><button class="btn-s" data-endprotect>早めに終える</button></div></div>` : ""}
     ${!guard && protectSuggest(toKey(new Date())) ? `<div class="banner">最近おつかれ気味のようです。<b>守りの週</b>（目標をお休みして記録だけにする1週間）にしますか？
       <div style="margin-top:6px;display:flex;gap:8px"><button class="btn-s" data-startprotect>守りの週にする</button><button class="btn-s" data-dismissprotect>今はこのまま</button></div></div>` : ""}
