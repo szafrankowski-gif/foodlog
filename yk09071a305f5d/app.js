@@ -56,6 +56,7 @@ const DICT = [
 // ---------- 状態 ----------
 let data = {};
 let view = "log";
+let range = 14; // 振り返りの期間（日）
 let cursor = new Date();
 let inputText = "";
 let slotSel = null, slotSelKey = null; // 区分の手動選択は当日限り（翌日に残留させない）
@@ -420,6 +421,158 @@ function renderLog() {
   `;
 }
 
+// ---------- 振り返り ----------
+// トーン規約：目標に届かない側の色は水色のみ・目標線は細い破線・記録がない日は薄く表示するだけ（強調しない）
+function ykDays(n) {
+  const days = [];
+  const today = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const k = toKey(d), dd = data[k] || {};
+    days.push({
+      key: k, label: `${d.getMonth() + 1}/${d.getDate()}`,
+      has: !!(dd.foods || []).length,
+      p: Math.round(((dd.foods || []).reduce((a, f) => a + num(f.p), 0)) * 10) / 10,
+      kcal: Math.round((dd.foods || []).reduce((a, f) => a + num(f.kcal), 0)),
+      fiber: Math.round(((dd.foods || []).reduce((a, f) => a + num(f.fiber), 0)) * 10) / 10,
+      weight: dd.weight != null && dd.weight !== "" ? Number(dd.weight) : null,
+      fatpct: dd.fatpct != null && dd.fatpct !== "" ? Number(dd.fatpct) : null,
+    });
+  }
+  return days;
+}
+function ykBarChart(days, field, target, color) {
+  const W = 448, H = 150, padL = 34, padB = 20, padT = 10;
+  const maxY = Math.max(target || 0, ...days.map((d) => d.has ? d[field] : 0)) * 1.08 || 1;
+  const iw = (W - padL) / days.length;
+  const y = (v) => padT + (H - padT - padB) * (1 - Math.min(v, maxY) / maxY);
+  const bars = days.map((d, i) => {
+    if (!d.has) return "";
+    const v = d[field];
+    const met = target != null && v >= target;
+    const h = (H - padT - padB) * (Math.min(v, maxY) / maxY);
+    return `<rect x="${(padL + i * iw + iw * 0.18).toFixed(1)}" y="${(H - padB - h).toFixed(1)}" width="${(iw * 0.64).toFixed(1)}" height="${Math.max(h, 1).toFixed(1)}" rx="2" fill="${target == null ? color : met ? "#3A7A4C" : "#47719A"}"/>`;
+  }).join("");
+  const step = days.length > 20 ? 5 : days.length > 10 ? 3 : 1;
+  const labels = days.map((d, i) => i % step === 0
+    ? `<text x="${(padL + i * iw + (i === 0 ? 0 : iw / 2)).toFixed(1)}" y="${H - 5}" font-size="13" fill="#6E675F" text-anchor="${i === 0 ? "start" : "middle"}">${d.label}</text>` : "").join("");
+  const grid = [0, maxY / 2].map((v) => `<line x1="${padL}" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#E9E5DF" stroke-width=".8"/>`).join("");
+  const axis = [0, Math.round(maxY / 2), Math.round(maxY)].map((v) =>
+    `<text x="${padL - 5}" y="${(y(v) + 4).toFixed(1)}" font-size="13" fill="#6E675F" text-anchor="end">${v}</text>`).join("");
+  const tline = target != null ? `<line x1="${padL}" x2="${W}" y1="${y(target).toFixed(1)}" y2="${y(target).toFixed(1)}" stroke="#3A7A4C" stroke-width="1.4" stroke-dasharray="4 3"/>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">${grid}${axis}${bars}${tline}${labels}</svg>`;
+}
+function ykLineChart(days, field, color, target) {
+  const pts = days.map((d, di) => ({ v: d[field], di, label: d.label })).filter((p) => p.v != null);
+  if (pts.length < 2) return `<div style="font-size:13px;color:var(--muted);padding:12px 0">記録が2日分たまるとグラフが出ます。</div>`;
+  const W = 448, H = 150, padL = 40, padB = 20, padT = 10;
+  const vs = pts.map((p) => p.v).concat(target != null ? [Number(target)] : []);
+  const lo = Math.min(...vs) - 0.6, hi = Math.max(...vs) + 0.6;
+  const x = (p) => padL + (W - padL - 8) * (days.length === 1 ? 0.5 : p.di / (days.length - 1));
+  const y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo));
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+  const dots = pts.map((p) => `<circle cx="${x(p).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="3" fill="${color}"/>`).join("");
+  const grid = [lo, (lo + hi) / 2, hi].map((v) => `<line x1="${padL}" x2="${W - 8}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#E9E5DF" stroke-width=".8"/>`).join("");
+  const axis = [lo, (lo + hi) / 2, hi].map((v) =>
+    `<text x="${padL - 5}" y="${(y(v) + 4).toFixed(1)}" font-size="13" fill="#6E675F" text-anchor="end">${v.toFixed(1)}</text>`).join("");
+  const tline = target != null ? `<line x1="${padL}" x2="${W - 8}" y1="${y(Number(target)).toFixed(1)}" y2="${y(Number(target)).toFixed(1)}" stroke="#6E675F" stroke-width="1" stroke-dasharray="3 4"/>` : "";
+  const anch = (px) => px - padL < 16 ? "start" : (W - 8) - px < 16 ? "end" : "middle";
+  const labels = pts.map((p, i) => (i === 0 || i === pts.length - 1)
+    ? `<text x="${x(p).toFixed(1)}" y="${H - 5}" font-size="13" fill="#6E675F" text-anchor="${anch(x(p))}">${p.label}</text>` : "").join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">${grid}${axis}${tline}<path d="${path}" fill="none" stroke="${color}" stroke-width="2"/>${dots}${labels}</svg>`;
+}
+function buildCsv() {
+  const keys = Object.keys(data).sort();
+  const rows = ["date,protein_g,fiber_g,soluble_fiber_g,kcal,satfat_g,weight_kg,fatpct,fatigue,foods"];
+  for (const k of keys) {
+    const dd = data[k];
+    if (!dd) continue;
+    const fs = dd.foods || [];
+    rows.push([k,
+      fs.reduce((a, f) => a + num(f.p), 0), fs.reduce((a, f) => a + num(f.fiber), 0),
+      fs.reduce((a, f) => a + num(f.sfiber), 0), Math.round(fs.reduce((a, f) => a + num(f.kcal), 0)),
+      fs.reduce((a, f) => a + num(f.satfat), 0), dd.weight ?? "", dd.fatpct ?? "", dd.fatigue ?? "",
+      '"' + fs.map((f) => `${SLOT_LABEL[f.slot] || ""}${f.t ? "(" + f.t + ")" : ""}:${String(f.name).replace(/"/g, "")}`).join("・") + '"',
+    ].join(","));
+  }
+  return rows.join("\n");
+}
+function renderReview() {
+  const c = cfg();
+  const guard = protectActive(toKey(new Date()));
+  const days = ykDays(range);
+  const logged = days.filter((d) => d.has);
+  const avgP = logged.length ? Math.round(logged.reduce((a, d) => a + d.p, 0) / logged.length) : 0;
+  const avgK = logged.length ? Math.round(logged.reduce((a, d) => a + d.kcal, 0) / logged.length) : 0;
+  const okDays = c.kcalFloor ? logged.filter((d) => d.kcal >= Number(c.kcalFloor)).length : null;
+  const wk = weeklyCounts(toKey(new Date()));
+  const w7 = weightAvg7(new Date());
+  const rhythm = [
+    ["🐟 魚", wk.fish, 3], ["🫘 大豆", wk.soy, 6], ["🥜 ナッツ", wk.nuts, 6],
+    ["🫚 生姜", wk.ginger, 6], ["🧘 ピラティス", wk.pilates, 2], ["🚶 散歩", wk.walk, 5],
+  ];
+  return `
+    <div class="rangebtns">
+      <button class="btn-s ${range === 14 ? "on" : ""}" data-range="14">2週間</button>
+      <button class="btn-s ${range === 30 ? "on" : ""}" data-range="30">1ヶ月</button>
+      <button class="btn-s" data-csv style="margin-left:auto">⬇ CSV</button>
+    </div>
+    <div class="sumgrid">
+      <div class="sumcard"><div class="sumlabel">平均たんぱく質</div><div><span class="sumval mono" style="color:${c.pTarget && avgP >= Number(c.pTarget) ? "var(--green)" : "var(--text)"}">${avgP}</span><span class="sumunit mono"> g</span></div><div class="sumnote">記録 ${logged.length}日</div></div>
+      <div class="sumcard"><div class="sumlabel">平均エネルギー</div><div><span class="sumval mono">${avgK.toLocaleString()}</span><span class="sumunit mono"> kcal</span></div>${!guard && okDays != null ? `<div class="sumnote">しっかり食べられた日 ${okDays}/${logged.length}日</div>` : ""}</div>
+      <div class="sumcard"><div class="sumlabel">⚖️ 体重（7日平均）</div><div><span class="sumval mono">${w7 ?? "—"}</span><span class="sumunit mono"> kg</span></div>${!guard && c.wTarget ? `<div class="sumnote">目標 ${c.wTarget} kg</div>` : ""}</div>
+      <div class="sumcard"><div class="sumlabel">🫚 生姜紅茶</div><div><span class="sumval mono" style="color:${wk.ginger > 0 ? "var(--green)" : "var(--text)"}">${wk.ginger}</span><span class="sumunit mono"> 日</span></div><div class="sumnote">今週飲めた日</div></div>
+    </div>
+
+    <div class="section">
+      <div class="seclabel">今週の食べ物・運動リスト</div>
+      <div class="card rhythmbox">
+        ${rhythm.map(([label, v, t]) => {
+          const dots = Array.from({ length: Math.max(guard ? v : t, v) }).map((_, i) =>
+            `<span class="rhydot ${i < v ? "fill" : ""}"></span>`).join("");
+          return `<div class="rhyrow">
+            <span class="rhyname">${label}</span>
+            <div class="rhydots">${dots}</div>
+            <span class="rhystat mono ${!guard && v >= t ? "met" : ""}">${guard ? `${v}日` : v >= t ? `${v}/${t} ✓` : `${v}/${t}`}</span>
+          </div>`;
+        }).join("")}
+      </div>
+      ${guard ? "" : `<div class="hint" style="margin:6px 0 0">できた日を数えるだけのリストです。月曜から新しい週が始まります。</div>`}
+    </div>
+
+    <div class="chartbox">
+      <div class="seclabel">🥩 たんぱく質の推移</div>
+      ${ykBarChart(days, "p", guard ? null : (c.pTarget ? Number(c.pTarget) : null), "#47719A")}
+    </div>
+    <div class="chartbox">
+      <div class="seclabel">⚡ エネルギーの推移</div>
+      ${ykBarChart(days, "kcal", guard ? null : (c.kcalFloor ? Number(c.kcalFloor) : null), "#47719A")}
+      ${!guard && c.kcalFloor ? `<div class="hint" style="margin:4px 0 0">緑の破線＝下限 ${Number(c.kcalFloor).toLocaleString()} kcal（届いた日は緑）</div>` : ""}
+    </div>
+    <div class="chartbox">
+      <div class="seclabel">⚖️ 体重の推移</div>
+      ${ykLineChart(days, "weight", "#CE7328", guard ? null : c.wTarget)}
+    </div>
+    <div class="chartbox">
+      <div class="seclabel">体脂肪率の推移</div>
+      ${ykLineChart(days, "fatpct", "#47719A", null)}
+    </div>
+
+    <div class="section" style="padding-bottom:48px">
+      <div class="seclabel">日別ログ</div>
+      <div class="card daylist">
+        ${days.slice().reverse().map((d) => `
+          <div class="dayrow ${d.has ? "" : "off"}">
+            <span class="mono" style="width:44px">${d.label}</span>
+            <span class="mono" style="color:${d.has ? "var(--text)" : "var(--muted)"}">${d.has ? d.p + "P" : "—"}</span>
+            <span class="mono" style="color:var(--muted)">${d.has ? d.kcal.toLocaleString() + "kcal" : ""}</span>
+            <span class="mono" style="margin-left:auto;color:var(--muted)">${d.weight != null ? d.weight.toFixed(1) + "kg" : ""}</span>
+          </div>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function renderSettings() {
   const c = cfg();
   const hasKey = !!apiKey();
@@ -510,10 +663,10 @@ function renderSettings() {
 
 function render() {
   const app = $("#app");
-  const body = view === "log" ? renderLog() : renderSettings();
+  const body = view === "log" ? renderLog() : view === "review" ? renderReview() : renderSettings();
   app.innerHTML = `
     <div class="tabs">
-      ${[["log", "記録"], ["settings", "設定"]].map(([v, l]) =>
+      ${[["log", "記録"], ["review", "振り返り"], ["settings", "設定"]].map(([v, l]) =>
         `<button class="tab ${view === v ? "on" : ""}" data-view="${v}">${l}</button>`).join("")}
     </div>
     ${body}
@@ -578,6 +731,13 @@ function bindEvents() {
       updateDay(toKey(cursor), { [inp.dataset.field]: v || null });
     }));
 
+  document.querySelectorAll("[data-range]").forEach((b) =>
+    b.addEventListener("click", () => { range = Number(b.dataset.range); render(); }));
+  const csv = $("[data-csv]"); if (csv) csv.addEventListener("click", () => {
+    const blob = new Blob(["\uFEFF" + buildCsv()], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = `foodlogYK_${toKey(new Date())}.csv`; a.click();
+  });
   const sp = $("[data-startprotect]"); if (sp) sp.addEventListener("click", startProtect);
   const ep = $("[data-endprotect]"); if (ep) ep.addEventListener("click", endProtect);
   const dp = $("[data-dismissprotect]"); if (dp) dp.addEventListener("click", dismissProtect);

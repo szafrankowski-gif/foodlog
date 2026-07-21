@@ -178,6 +178,30 @@
   }
   .spin { display:inline-block; animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* 振り返りタブ */
+  .rangebtns { display:flex; gap:6px; align-items:center; padding:2px 16px 12px; }
+  .sumgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:0 16px 6px; }
+  .sumcard { background:var(--surface); border:1px solid var(--line); border-radius:var(--r-l); padding:12px 14px; }
+  .sumlabel { font-size:11.5px; color:var(--muted); font-weight:700; }
+  .sumval { font-size:26px; font-weight:800; }
+  .sumunit { font-size:13px; color:var(--muted); }
+  .sumnote { font-size:11px; color:var(--muted); margin-top:2px; }
+  .chartbox { padding:14px 16px 0; }
+  /* 今週のリズム（食べ物・運動の週間リスト。できた日を数えるだけ） */
+  .rhythmbox { padding:6px 14px; }
+  .rhyrow { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
+  .rhyrow:last-child { border-bottom:none; }
+  .rhyname { font-size:14px; width:110px; flex-shrink:0; }
+  .rhydots { display:flex; gap:5px; flex:1; }
+  .rhydot { width:10px; height:10px; border-radius:50%; border:1.5px solid var(--line-strong); }
+  .rhydot.fill { background:var(--green); border-color:var(--green); }
+  .rhystat { font-size:12.5px; flex-shrink:0; color:var(--muted); }
+  .rhystat.met { color:var(--green); font-weight:600; }
+  .daylist { padding:2px 14px; }
+  .dayrow { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .dayrow:last-child { border-bottom:none; }
+  .dayrow.off { color:var(--muted); opacity:.7; }
 </style>
 </head>
 <body>
