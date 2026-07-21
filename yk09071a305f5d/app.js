@@ -271,12 +271,13 @@ async function submitText() {
 
 // ---------- 描画 ----------
 // 今週の食べ物・運動リスト（できた日を数えるだけ・月曜始まり）。記録タブと振り返りで共用
+const RHYTHM_DEF = [
+  ["🐟 魚", "fish", 3], ["🫘 大豆", "soy", 6], ["🥜 ナッツ", "nuts", 6],
+  ["🫚 生姜", "ginger", 6], ["🧘 ピラティス", "pilates", 2], ["🚶 散歩", "walk", 5],
+];
 function rhythmCard(guard) {
   const wk = weeklyCounts(toKey(new Date()));
-  const rows = [
-    ["🐟 魚", wk.fish, 3], ["🫘 大豆", wk.soy, 6], ["🥜 ナッツ", wk.nuts, 6],
-    ["🫚 生姜", wk.ginger, 6], ["🧘 ピラティス", wk.pilates, 2], ["🚶 散歩", wk.walk, 5],
-  ];
+  const rows = RHYTHM_DEF.map(([label, k, t]) => [label, wk[k], t]);
   return `<div class="card rhythmbox">
     ${rows.map(([label, v, t]) => {
       const dots = Array.from({ length: Math.max(guard ? v : t, v) }).map((_, i) =>
@@ -345,6 +346,12 @@ function renderLog() {
     ${!guard && protectSuggest(toKey(new Date())) ? `<div class="banner">最近おつかれ気味のようです。<b>守りの週</b>（目標をお休みして記録だけにする1週間）にしますか？
       <div style="margin-top:6px;display:flex;gap:8px"><button class="btn-s" data-startprotect>守りの週にする</button><button class="btn-s" data-dismissprotect>今はこのまま</button></div></div>` : ""}
     ${obs ? `<div class="banner">🔍 観測期間 あと${obsDays}日。いつも通りでOKです。</div>` : ""}
+    ${(() => {
+      if (guard) return "";
+      const wkS = weeklyCounts(toKey(new Date()));
+      const rem = RHYTHM_DEF.filter(([, k, t]) => wkS[k] < t).map(([label, k, t]) => `${label.split(" ")[1]}あと${t - wkS[k]}`);
+      return `<button class="pacesum ${rem.length ? "" : "done"}" data-pacejump><span class="txt">${rem.length ? `今週の残り：${rem.join("・")}` : "今週の食べ物・運動 ✓"}</span><span class="more">詳細 ›</span></button>`;
+    })()}
 
     <div class="card g3">
       ${gaugeRow("🥩", "たんぱく質", P, c.pTarget ? Number(c.pTarget) : null, "g", ["達成です。しっかり入りました", "今日もきちんと届きました", "この調子です。よく食べられています"][new Date(key).getDate() % 3], null, guard)}
@@ -361,29 +368,6 @@ function renderLog() {
         ${!guard && kcalNote ? `<div class="gnote info">${kcalNote}</div>` : ""}
         ${SAT > 0 ? `<div class="gsub">飽和脂肪 <b class="mono">${SAT}</b> g（参考）</div>` : ""}
       </div>
-    </div>
-
-    <div class="section" style="padding-top:12px">
-      <div class="seclabel">今週の食べ物・運動</div>
-      ${rhythmCard(guard)}
-    </div>
-
-    <div class="card wcard">
-      <span>⚖️</span>
-      <input class="mono" data-field="weight" inputmode="decimal" placeholder="—" value="${day.weight ?? ""}"> kg
-      ${!guard && c.wTarget ? `<span style="font-size:12.5px;color:var(--muted)">目標 ${c.wTarget} kg</span>` : ""}
-      ${w7 ? `<span style="font-size:12.5px;color:var(--muted)">7日平均 <b class="mono">${w7}</b></span>` : ""}
-      <div class="fatline">体脂肪 <input class="mono" data-field="fatpct" inputmode="decimal" placeholder="—" value="${day.fatpct ?? ""}" style="width:56px"> %</div>
-    </div>
-    ${!guard && day.weight != null && day.weight !== "" && c.wFloor && Number(day.weight) < Number(c.wFloor)
-      ? `<div class="wnote low">少し軽めの日です。いつもの食事に、好きなものを1品足せると安心です。</div>` : ""}
-    ${w2 && w2[1] > w2[0] ? `<div class="wnote up">✓ 少しずつ増えています。いい流れです</div>` : ""}
-    <!-- 増加の褒めは目標でなく実績の肯定なので、守りの週でも意図的に表示する -->
-
-    <div class="section" style="padding-bottom:0"><div class="seclabel" style="margin-bottom:0">きょうの調子</div></div>
-    <div class="fatigue">
-      ${[["ok", "😌 いつも通り"], ["tired", "😐 少し疲れ"], ["bad", "😞 かなり疲れ"]].map(([v, l]) =>
-        `<button class="fbtn ${day.fatigue === v ? "on" : ""}" data-fatigue="${v}">${l}</button>`).join("")}
     </div>
 
     <div class="section">
@@ -420,6 +404,30 @@ function renderLog() {
       <button class="chip" data-movechip="walk:60">60分</button>
       <button class="chip" data-movechip="pilates:0">🧘 ピラティス</button>
       <button class="chip" data-movechip="dumbbell:0">💪 ダンベル</button>
+    </div>
+
+    <div class="card wcard">
+      <span>⚖️</span>
+      <input class="mono" data-field="weight" inputmode="decimal" placeholder="—" value="${day.weight ?? ""}"> kg
+      ${!guard && c.wTarget ? `<span style="font-size:12.5px;color:var(--muted)">目標 ${c.wTarget} kg</span>` : ""}
+      ${w7 ? `<span style="font-size:12.5px;color:var(--muted)">7日平均 <b class="mono">${w7}</b></span>` : ""}
+      <div class="fatline">体脂肪 <input class="mono" data-field="fatpct" inputmode="decimal" placeholder="—" value="${day.fatpct ?? ""}" style="width:56px"> %</div>
+    </div>
+    ${!guard && day.weight != null && day.weight !== "" && c.wFloor && Number(day.weight) < Number(c.wFloor)
+      ? `<div class="wnote low">少し軽めの日です。いつもの食事に、好きなものを1品足せると安心です。</div>` : ""}
+    ${w2 && w2[1] > w2[0] ? `<div class="wnote up">✓ 少しずつ増えています。いい流れです</div>` : ""}
+    <!-- 増加の褒めは目標でなく実績の肯定なので、守りの週でも意図的に表示する -->
+
+    <div class="section" style="padding-bottom:0"><div class="seclabel" style="margin-bottom:0">きょうの調子</div></div>
+    <div class="fatigue">
+      ${[["ok", "😌 いつも通り"], ["tired", "😐 少し疲れ"], ["bad", "😞 かなり疲れ"]].map(([v, l]) =>
+        `<button class="fbtn ${day.fatigue === v ? "on" : ""}" data-fatigue="${v}">${l}</button>`).join("")}
+    </div>
+
+    <div class="section" style="padding-top:12px">
+      <div class="seclabel">今週の食べ物・運動</div>
+      ${rhythmCard(guard)}
+      ${guard ? "" : `<div class="hint" style="margin:6px 0 0">できた日を数えるだけのリストです。月曜から新しい週が始まります。</div>`}
     </div>
 
     <div class="stickybar">
@@ -732,6 +740,10 @@ function bindEvents() {
       updateDay(toKey(cursor), { [inp.dataset.field]: v || null });
     }));
 
+  const pj = $("[data-pacejump]"); if (pj) pj.addEventListener("click", () => {
+    const el = document.querySelector(".rhythmbox");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
   document.querySelectorAll("[data-range]").forEach((b) =>
     b.addEventListener("click", () => { range = Number(b.dataset.range); render(); }));
   const csv = $("[data-csv]"); if (csv) csv.addEventListener("click", () => {

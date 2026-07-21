@@ -51,6 +51,15 @@
     background:var(--tint-blue); color:#3E6C90; border:1px solid rgba(91,143,184,.3);
   }
   .banner.protect { background:var(--tint-rose); color:var(--rose-text); border-color:rgba(206,115,40,.3); }
+  /* 週の残りサマリー1行（元祖B-3の文法。末尾の「詳細 ›」がタップ可能の合図） */
+  .pacesum {
+    display:flex; align-items:center; gap:6px; width:calc(100% - 32px); margin:0 16px 10px; padding:0;
+    background:none; border:none; text-align:left; cursor:pointer; font-family:inherit;
+    font-size:13px; color:var(--muted);
+  }
+  .pacesum .txt { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pacesum .more { flex-shrink:0; color:var(--rose-text); }
+  .pacesum.done { color:var(--green); }
 
   .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--r-l); }
   .section { padding:14px 16px 0; }
