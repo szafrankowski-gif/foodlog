@@ -1,4 +1,4 @@
-/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示）｜更新: 2026-07-11 */
+/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示）｜更新: 2026-07-23 */
 "use strict";
 
 const FLOOR = 100, CEILING = 120;
@@ -799,6 +799,18 @@ function bgMeals(cfg, day) {
     }
     return coef;
   };
+  // 上昇後の介入（食後90〜180分の運動）：ピークは変えず、以降の下降を係数分だけ速める。
+  // v0.2較正の知見「効果的な歩きは90分窓の外で起きる」を、信号予報（ピーク・🔴判定）に影響しない形で曲線へ反映。
+  const tailMod = (mealMin) => {
+    let best = null;
+    for (const mv of moves) {
+      const tau = mv.m - mealMin;
+      if (tau <= 90 || tau >= BG_RISE + BG_FALL) continue;
+      const c = Number(mv.kind === "squat" ? cfg.ex.squat : mv.dur >= 30 ? cfg.ex.walk30 : cfg.ex.walk10);
+      if (c && c < 1 && (!best || c < best.ratio)) best = { cut: tau, ratio: c };
+    }
+    return best;
+  };
   const hourCoef = (h) => h >= 19 ? cfg.hour.night : h >= 15 ? cfg.hour.evening : h >= 11 ? cfg.hour.noon : cfg.hour.morning;
   const sl = day.sleep == null || day.sleep === "" ? cfg.sleep[0]
     : Number(day.sleep) >= 6.5 ? cfg.sleep[0] : Number(day.sleep) >= 5 ? cfg.sleep[1] : cfg.sleep[2];
@@ -810,7 +822,7 @@ function bgMeals(cfg, day) {
     const r = C > 0 ? P / C : 1;
     const pcr = r >= 0.3 ? cfg.pcorr[0] : r >= 0.15 ? cfg.pcorr[1] : cfg.pcorr[2];
     const rise = Math.max(3, C * fc * hourCoef(Math.floor(g.min / 60)) * pcr * sl * exCoef(g.min));
-    return { min: g.min, rise };
+    return { min: g.min, rise, tail: tailMod(g.min) };
   });
   return { meals, moves, trains };
 }
@@ -818,6 +830,11 @@ function bgShape(tau, R) {
   if (tau < 0 || tau >= BG_RISE + BG_FALL) return 0;
   if (tau < BG_RISE) return R * (1 - Math.cos(Math.PI * tau / BG_RISE)) / 2;
   return R * (1 + Math.cos(Math.PI * (tau - BG_RISE) / BG_FALL)) / 2;
+}
+function bgShapeMeal(tau, meal) {
+  // tail介入以降は時間の進みを1/ratio倍に（=下降が速く終わる）。cut>90>BG_RISEのためピークは不変。
+  const t = meal.tail && tau > meal.tail.cut ? meal.tail.cut + (tau - meal.tail.cut) / meal.tail.ratio : tau;
+  return bgShape(t, meal.rise);
 }
 function bgCurveSvg(cfg, day) {
   const { meals, moves, trains } = bgMeals(cfg, day);
@@ -829,7 +846,7 @@ function bgCurveSvg(cfg, day) {
   const pts = [];
   for (let m = start; m <= end; m += 5) {
     let v = base;
-    for (const meal of meals) v += bgShape(m - meal.min, meal.rise);
+    for (const meal of meals) v += bgShapeMeal(m - meal.min, meal);
     pts.push({ m, v });
   }
   let pm = pts[0]; for (const p of pts) if (p.v > pm.v) pm = p;
