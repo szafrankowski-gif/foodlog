@@ -1,8 +1,17 @@
-/* foodlog v2 — 食事ログPWA（実績ベース判定・歩数参考表示）｜更新: 2026-07-23 */
+/* foodlog v3.1 — 食事・トレーニングログPWA（増量フェーズ：糖質下限管理・身体能力ストック）｜更新: 2026-07-26 */
 "use strict";
 
-const FLOOR = 100, CEILING = 120;
-const CARB_LIMIT = { rest: 250, active: 330 }; // 61kg・高活動量での維持ライン。血糖対策は量でなく質とタイミングで
+// v3.1 増量フェーズの目標値（一元管理。値の変更はここだけ／機能側にハードコードしない）
+const GOALS = {
+  proteinBase: 115, proteinTrain: 130,          // たんぱく質 基準／筋トレ・高強度日
+  carbFloorRest: 250, carbFloorTrain: 300,      // 糖質は下限管理（上限の概念は廃止）
+  weightTarget: 64.5,                            // 増量目標kg
+  weightRateMax: 0.5, weightRateMin: 0.2,        // 月あたり増加ペースの適正範囲kg
+  fatCeil: 16.0,                                 // 体脂肪率ガード%
+  grip: 49.0, knee: 12.0,                        // 測定目標：握力kg（左右とも）・膝壁cm
+};
+const FLOOR = GOALS.proteinBase, CEILING = GOALS.proteinTrain;
+const CARB_FLOOR = { rest: GOALS.carbFloorRest, active: GOALS.carbFloorTrain }; // 血糖対策は量でなく質とタイミングで
 const DATA_KEY = "mealog:data";
 const API_KEY_KEY = "mealog:apikey";
 const GH_TOKEN_KEY = "mealog:ghtoken";
@@ -56,11 +65,27 @@ const hasVitdFood = (dd) => (((dd || {}).foods) || []).some((f) => /ビタミン
 const vitdOn = (dd) => (dd && dd.vitd != null) ? !!dd.vitd : hasVitdFood(dd);
 // 体重など小数1桁で表示
 const fmt1 = (v) => (v == null || v === "" || isNaN(Number(v))) ? (v ?? "") : Number(v).toFixed(1);
-// 糖質ゲージの色：未記録=muted／記録あり=通常／目標到達=達成色／120%以上=アンバー（数字と色だけで語る）
-// mutedは「未入力・無効」の意味に限定し、1gでも記録があればice＝進行中（たんぱくゲージと同じ文法）
-function carbBarColor(carbs, limit) {
-  const r = limit > 0 ? carbs / limit : 0;
-  return r >= 1.2 ? "var(--amber)" : r >= 1.0 ? "var(--green)" : carbs > 0 ? "var(--ice)" : "var(--muted)";
+// 糖質ゲージの色（下限管理）：未記録=muted／下限未達=ice＝進行中／下限到達=green。
+// 下限を超えても警告色にしない（増量フェーズ：多い分は問題にしない）
+function carbBarColor(carbs, floor) {
+  return carbs >= floor ? "var(--green)" : carbs > 0 ? "var(--ice)" : "var(--muted)";
+}
+// 日区分：筋トレ日（trainA/B 1種目以上チェック）／高強度日（登攀・柔術・山行）／休養日
+function dayKind(dd) {
+  if (dayActs(dd).some((a) => a === "trainA" || a === "trainB") && checkedCount(dd) > 0) return "train";
+  if (dayActs(dd).some(isPhysicalAct)) return "hard";
+  return "rest";
+}
+const DAY_KIND_LABEL = { train: "筋トレ日 💪", hard: "高強度日", rest: "休養日" };
+// 今週（月曜始まり）の筋トレ実施日数（trainA/Bで1種目以上チェックした日）
+function weeklyTrain(anchorKey) {
+  const w = weekInfo(anchorKey);
+  let n = 0;
+  for (let i = 0; i < w.dayN; i++) {
+    const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
+    if (dayActs(dd).some((a) => a === "trainA" || a === "trainB") && checkedCount(dd) > 0) n++;
+  }
+  return n;
 }
 
 const MENU = {
@@ -143,7 +168,7 @@ function logicalToday() { const d = new Date(); if (d.getHours() * 60 + d.getMin
 const lateMin = (min) => min != null && min < DAY_END_MIN ? min + 1440 : min;
 
 let data = {};
-let view = "log";        // log | review | settings
+let view = "log";        // log | review | measure | settings
 let cursor = logicalToday();
 let range = 14;
 let busy = false, commentBusy = false;
@@ -330,6 +355,97 @@ function weightAvg7(anchor) {
   return n >= 2 ? (sum / n).toFixed(1) : null;
 }
 
+// ---------- 身体能力ストック（③測定。フローと混ぜない） ----------
+// day.meas = { gripR,gripL, kneeR,kneeL, boxR,boxL, hang } 数値のみ。記録がある日だけ持つ（後方互換：無ければnull安全）
+const MEAS_DEF = [
+  { key: "grip", label: "握力", unit: "kg", sides: true, better: "up", target: GOALS.grip,
+    note: "週1・毎週同じ曜日推奨。クライミング/柔術の翌日は測定非推奨（疲労で値がぶれます）" },
+  { key: "knee", label: "膝壁テスト", unit: "cm", sides: true, better: "up", target: GOALS.knee,
+    note: "週1。左右差1.5cm超は足首モビリティの左右差サイン" },
+  { key: "box",  label: "ボックスピストル", unit: "cm", sides: true, better: "down", target: null,
+    note: "更新時に随時。箱が低いほど進歩（目標：箱なしフル）" },
+  { key: "hang", label: "デッドハング", unit: "秒", sides: false, better: "up", target: null,
+    note: "週1（筋トレB日）。グリップ持久の指標" },
+];
+// 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
+// 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース失敗はmeasNoteに保存し測定ビューで分類可能に
+function parseMeasText(text) {
+  const t = text.trim();
+  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング)/.exec(t);
+  if (!head) return null;
+  const key = { "握力": "grip", "膝壁": "knee" }[head[1]] || (head[1].startsWith("ピストル") ? "box" : "hang");
+  const r = /右[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t), l = /左[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t);
+  const nums = (t.slice(head[1].length).match(/\d{1,3}(?:\.\d+)?/g) || []).map(Number);
+  const meas = {};
+  if (key === "hang") {
+    if (!nums.length) return { note: t };
+    meas.hang = nums[0];
+  } else if (r || l) {
+    if (r) meas[key + "R"] = Number(r[1]);
+    if (l) meas[key + "L"] = Number(l[1]);
+  } else if (nums.length >= 2) {
+    meas[key + "R"] = nums[0]; meas[key + "L"] = nums[1];
+  } else if (nums.length === 1) {
+    meas[key + "R"] = nums[0]; meas[key + "L"] = nums[0];
+  } else return { note: t };
+  return { meas };
+}
+// 測定系列：[{key, v:{gripR..}}] を日付昇順で（直近days日）
+function measSeries(days) {
+  const today = logicalToday();
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const k = toKey(d);
+    const m = data[k] && data[k].meas;
+    if (m) out.push({ key: k, m });
+  }
+  return out;
+}
+// 今週（月曜始まり）に測定済みかどうか（ティッカー用）
+function measThisWeek(anchorKey) {
+  const w = weekInfo(anchorKey);
+  const done = { grip: false, knee: false, hang: false };
+  for (let i = 0; i < w.dayN; i++) {
+    const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
+    const m = dd && dd.meas;
+    if (!m) continue;
+    if (m.gripR != null || m.gripL != null) done.grip = true;
+    if (m.kneeR != null || m.kneeL != null) done.knee = true;
+    if (m.hang != null) done.hang = true;
+  }
+  return done;
+}
+
+// ---------- 増量ペース（§5：7日移動平均の30日前比） ----------
+function weightMA7(endDate) {
+  let sum = 0, n = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(endDate); d.setDate(d.getDate() - i);
+    const w = data[toKey(d)] && data[toKey(d)].weight;
+    if (w != null && w !== "" && !isNaN(Number(w))) { sum += Number(w); n++; }
+  }
+  return n >= 2 ? sum / n : null;
+}
+function bulkPace() {
+  const today = logicalToday();
+  const cur = weightMA7(today);
+  const prev30 = new Date(today); prev30.setDate(prev30.getDate() - 30);
+  const old = weightMA7(prev30);
+  if (cur == null || old == null) return { cur, delta: null };
+  return { cur, delta: cur - old }; // kg/30日 ≒ kg/月
+}
+// 最新の体脂肪率・筋量（30日以内）
+function latestBody(field) {
+  const today = logicalToday();
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const dd = data[toKey(d)];
+    if (dd && dd[field] != null) return { v: Number(dd[field]), ago: i };
+  }
+  return null;
+}
+
 // ---------- Anthropic API ----------
 const NUTRITION_RULES = `各品目について次を判定：
 - p: たんぱく質g(整数)
@@ -424,33 +540,37 @@ async function fetchBakao(key) {
   const raw = await callApi({
     model: MODEL_BAKAO, max_tokens: 500,
     messages: [{ role: "user", content:
-`あなたは「塔ノ岳 ばかお」という栄養担当のコーチです。48歳男性クライマー・登山者（170cm/61kg、維持目標、TFCC損傷回復期、血糖やや高め・HbA1c5.9、起床9:30・就寝2:30の夜型）の食事ログに、一言評価を返します。
+`あなたは「塔ノ岳 ばかお」という栄養担当のコーチです。48歳男性クライマー・柔術練習者（170cm、増量フェーズ：目標${GOALS.weightTarget}kg・月+${GOALS.weightRateMin}〜${GOALS.weightRateMax}kgの緩増、TFCC損傷回復期、血糖やや高め・HbA1c5.9、起床9:30・就寝2:30の夜型）の食事ログに、一言評価を返します。
 
 評価の姿勢（厳守）：
 - 事実を淡々と。達成率が低い日に「満点」「完璧」と言わない
 - ダメ出しもしない
 - 完璧主義による息切れが最大リスクの人なので、圧をかけない
 - 良い点をひとつ具体的に挙げる。提案はあっても軽く一つまで
+- 増量フェーズ：助言は常に「食べる量を増やす」方向。「ひかえめに」「おさえる」「減らす」方向の言葉は使わない
+- 体重の増加・測定値（握力等）の向上には肯定的に触れる
 
 現在時刻：${hh}:${mm}
 時間帯の扱い（最重要）：${phaseNote}
 
-目標：たんぱく質は基準100g（毎日必達）、運動日は120gを目標にする（120gは上限ではなく、超えても全く問題ない）。糖質の目安は休養日250g前後、運動日330g前後（維持目標・高活動量のため十分に摂る方針。血糖対策は玄米優先・食後散歩・ドカ食い回避で行い、総量を過度に絞らない）。
+目標：たんぱく質は基準${FLOOR}g（毎日必達）、筋トレ日・高強度日は${CEILING}gを目標にする（上限ではなく、超えても全く問題ない）。糖質は下限管理：休養日${GOALS.carbFloorRest}g・筋トレ/高強度日${GOALS.carbFloorTrain}gを下回らないことが目標で、上限は設けない（血糖対策は玄米優先・食後散歩・ドカ食い回避という質とタイミングで行い、総量は絞らない）。P残・C下限残があるときは、具体的な食品での埋め方をひとつ示す（例：おにぎり1個で糖質+40g、プロテイン1杯でP+20g）。
 
-筋トレ設計：週2（A=ヒンジ・脚／B=引く・押す・体幹）。筋トレ日は目標120gを狙い、トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。翌朝の手首に違和感が出たら一段戻すルール。
+筋トレ設計：週2必須・最優先（A=ヒンジ・脚／B=引く・押す・体幹）。筋力プロフィール：プル（背中）は競技者級で維持、グリップは強化対象（目標${GOALS.grip}kg）、ヒンジとプッシュが伸びしろで筋トレA/Bの主役。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレ翌日は回復（睡眠・たんぱく質）に一言触れてよい。翌朝の手首に違和感が出たら一段戻すルール。
 
-運動日/休養日の判定は「実績ベース」：その日に筋トレのチェック・登攀・柔術・山行の実績があれば運動日。宣言でなく実績で決まる。
+日区分の判定は「実績ベース」：筋トレのチェックがあれば筋トレ日、登攀・柔術・山行の実績があれば高強度日（目標は筋トレ日と同じ）、どちらもなければ休養日。宣言でなく実績で決まる。就寝2:30の目標は増量の一部（睡眠中の成長ホルモン＝筋合成）として扱い、遅れた日は責めずに就寝側だけ軽く指摘してよい。
 
-対象日（${dateLabel}・${actLabel(day)}${active ? "＝運動日" : "＝休養日"}）のデータ：
-- たんぱく質：${total}g（目標${target}g）
-- 糖質：${carbs}g
+対象日（${dateLabel}・${actLabel(day)}＝${DAY_KIND_LABEL[dayKind(day)]}）のデータ：
+- たんぱく質：${total}g（目標${target}g${total < target ? `・残り${target - total}g` : "・到達"}）
+- 糖質：${carbs}g（下限${CARB_FLOOR[active ? "active" : "rest"]}g${carbs < CARB_FLOOR[active ? "active" : "rest"] ? `・下限まであと${CARB_FLOOR[active ? "active" : "rest"] - carbs}g` : "・下限達成"}）
 - 歩数：${day.steps != null ? day.steps.toLocaleString() + "歩（参考値。目標や警告には使わない。ただし休養日で15,000歩を超えている日は、糖質+40〜50g程度の追加補給に軽く触れてよい。責めない・警告調にしない）" : "記録なし"}
 - サプリ：クレアチン${creatineOn(day) ? "済" : "未"}／ビタミンD${vitdOn(day) ? "済" : "未"}（クレアチン3〜5gは毎日方針。未の日はごく軽く一言リマインドしてよい。説教はしない）
-- 有酸素（Zone2）：本日${dayActs(day).includes("aerobic") ? "実施" : "なし"}／今週${weeklyAerobic(key)}回（目安1〜2回。糖質目標には影響しない。未実施を責めない。実施日は一言認めてよい）
+- 有酸素（Zone2）：本日${dayActs(day).includes("aerobic") ? "実施" : "なし"}／今週${weeklyAerobic(key)}回（増量フェーズでは維持レベル。糖質目標には影響しない。未実施は全く問題にしない。話題の中心にしない）
+- 今週の筋トレ：${weeklyTrain(key)}/2回（週2必須・最優先。0回のまま週末に近い時だけ、責めずに枠の置き場を一緒に考える）
 - 睡眠：${day.sleep != null ? day.sleep + "時間（目標7時間）" : "記録なし"}${(day.bedtime || day.waketime) ? `／就寝${day.bedtime ?? "—"}・起床${day.waketime ?? "—"}（目標2:30就寝・9:30起床。ズレはセットで崩れるので就寝側を主因として見る）` : ""}${day.rhr != null ? `／安静時心拍${day.rhr}bpm（平常より明らかに高い朝は回復不足のサイン）` : ""}${day.mood ? `／本人の体調メモ：「${day.mood}」（数字と体感の対応を一言で拾う）` : ""}
 - 緑黄色野菜：${hasVeg ? "あり" : "なし"}／オメガ3の魚：${hasOmega3 ? "あり" : "なし"}
 - 運動実績：${actLabel(day)}${dayActs(day).filter((a)=>MENU[a]).map((a)=>`／${DAY_LABEL[a]}種目：${(((day.workout||{}).checks)||[]).filter((id)=>MENU[a].some((ex)=>ex.id===id)).length}/${MENU[a].length}`).join("")}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}
-${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${fmt1(day.weight) || "—"}kg／骨格筋量${day.muscle ?? "—"}kg／体脂肪率${day.fatpct ?? "—"}%（維持目標。骨格筋量の減少傾向にだけ注意を払う）
+${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${fmt1(day.weight) || "—"}kg／骨格筋量${day.muscle ?? "—"}kg／体脂肪率${day.fatpct ?? "—"}%（増量フェーズ：+${GOALS.weightRateMin}〜${GOALS.weightRateMax}kg/月なら順調。骨格筋量の増加を最重視。体脂肪率${GOALS.fatCeil}%超のときだけ間食の質に一言、減量提案はしない）
+` : ""}${day.meas ? `- 本日の身体能力測定：${MEAS_DEF.filter((d) => d.sides ? (day.meas[d.key + "R"] != null || day.meas[d.key + "L"] != null) : day.meas[d.key] != null).map((d) => `${d.label} ${d.sides ? `右${day.meas[d.key + "R"] ?? "—"}/左${day.meas[d.key + "L"] ?? "—"}` : day.meas[d.key]}${d.unit}`).join("、")}（向上していれば肯定的に。低下は責めない）
 ` : ""}${day.wrist ? `- 翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}
 ` : ""}- 食べたもの（時刻付き。血糖対策は総量でなく質とタイミング：時刻の偏り＝1食への糖質集中や、就寝2:30直前の重い食事があれば軽く触れてよい。時刻なしの品目は詮索しない）：${foodList}
 - 直近7日平均：${weekAvgFor(new Date(y, m - 1, d)) ?? "—"}g
@@ -477,7 +597,7 @@ async function extractHealthData(base64, mediaType) {
 - waketime: 起床時刻（"HH:MM"の24時間表記。例：11時31分→"11:31"）
 - rhr: 安静時心拍(bpm)
 - steps: 歩数（整数。「20,321歩」→20321）
-- aerobic: 有酸素運動の記録画面か（「ウォーキング」「ランニング」「サイクリング」「ハイキング」等の有酸素系アクティビティ名と、時間・平均心拍などが表示された画面ならtrue。「ワークアウト」「筋トレ」「ウェイト」等の筋力トレーニング画面、体組成・睡眠・日次サマリー画面はnull）
+- aerobic: 有酸素運動の記録画面か（「ランニング」「サイクリング」「ハイキング」等の有酸素系アクティビティ名と、時間・平均心拍などが表示された画面ならtrue。「ウォーキング」「散歩」は運動実績として数えない方針のためnull。「ワークアウト」「筋トレ」「ウェイト」等の筋力トレーニング画面、体組成・睡眠・日次サマリー画面もnull）
 写っていない・読み取れない項目はnull。睡眠スコアは不要。出力はJSONオブジェクトのみ：
 {"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull,"steps":数値orNull,"aerobic":真偽値orNull}
 前置き・説明・コードフェンス不要。` },
@@ -646,6 +766,9 @@ function fileHHMM(file, key) {
 // 下部バーの万能入力：運動・体重・睡眠はAIを介さずローカル判定（APIキー不要）。
 // 全トークンがローカル解釈できた場合のみ適用し、それ以外は食事としてAI概算へ回す。
 function parseLocalInput(text) {
+  // 測定（③ストック）：行頭が測定種目ならローカルで確定（パース失敗でもAIに回さずメモ保存）
+  const meas = parseMeasText(text);
+  if (meas) return { patch: {}, moves: [], meas: meas.meas || null, measNote: meas.note || null };
   const toks = text.split(/[、,，\s　・\/]+/).filter(Boolean);
   if (!toks.length) return null;
   const patch = {}, moves = [];
@@ -674,6 +797,8 @@ async function submitText() {
     inputText = ""; errMsg = "";
     const patch = Object.assign({}, local.patch);
     if (local.moves.length) patch.moves = (day.moves || []).concat(local.moves.map((mv) => Object.assign({}, mv, { t: stamp })));
+    if (local.meas) patch.meas = Object.assign({}, day.meas || {}, local.meas);
+    if (local.measNote) patch.measNote = ((day.measNote ? day.measNote + "\n" : "") + local.measNote);
     updateDay(key, patch);
     return;
   }
@@ -902,6 +1027,8 @@ function render() {
   let body;
   if (view === "settings") {
     body = `<div class="${wide ? "wide-single" : ""}" style="padding-bottom:48px">${renderSettings()}</div>`;
+  } else if (view === "measure") {
+    body = `<div class="${wide ? "wide-single" : ""}" style="padding-bottom:48px">${renderMeasure()}</div>`;
   } else if (wide) {
     // 大画面：記録（左）+ 振り返り（右）を同時表示。左はスティッキー入力欄が下端、右は従来の余白
     body = `<div class="wide-grid"><div class="wcol">${renderLog()}</div><div class="wcol sub" style="padding-bottom:48px">${renderReview()}</div></div>`;
@@ -910,7 +1037,7 @@ function render() {
   }
   app.innerHTML = `
     <div class="tabs">
-      ${(wide ? [["log","記録・振り返り"],["settings","設定"]] : [["log","記録"],["review","振り返り"],["settings","設定"]]).map(([v,l]) =>
+      ${(wide ? [["log","記録・振り返り"],["measure","測定"],["settings","設定"]] : [["log","記録"],["review","振り返り"],["measure","測定"],["settings","設定"]]).map(([v,l]) =>
         `<button class="tab ${view===v || (wide && v==="log" && view==="review") ?"on":""}" data-view="${v}">${l}</button>`).join("")}
     </div>
     ${body}
@@ -931,16 +1058,15 @@ function renderLog() {
   const barColor = hitFloor ? "var(--green)" : "var(--ice)";
   const pct = Math.min(total / CEILING, 1) * 100;
   const floorPct = (FLOOR / CEILING) * 100;
-  const carbLimit = CARB_LIMIT[active ? "active" : "rest"];
-  // B-4: 休養日15,000歩超は+50gの活動補正帯を表示（目標データは不変・表示のみ）
-  const carbBand = !active && day.steps != null && day.steps >= STEP_NOTE_MIN;
-  const carbMax = carbBand ? carbLimit + 50 : carbLimit;
-  const carbHot = carbBand ? carbs > carbMax : carbs >= carbLimit * 1.2; // 帯がある日は帯超過のみアンバー（帯なしは従来の120%発火）
-  const carbColor = carbBand && carbs > carbMax ? "var(--amber)" : carbBarColor(carbs, carbMax);
-  const carbPct = Math.min(carbMax > 0 ? carbs / carbMax : 0, 1) * 100;
-  const carbDiff = carbs < carbLimit ? `あと ${carbLimit - carbs}g`
-    : carbBand && carbs <= carbMax ? `補正枠内 あと${carbMax - carbs}g`
-    : `+${carbs - carbMax}g`;
+  // §3 糖質は下限管理：足りない日だけ気にする。多い分は警告しない（増量フェーズ）
+  const kind = dayKind(day);
+  const carbFloor = CARB_FLOOR[active ? "active" : "rest"];
+  const carbColor = carbBarColor(carbs, carbFloor);
+  const carbPct = Math.min(carbFloor > 0 ? carbs / carbFloor : 0, 1) * 100;
+  const carbDiff = carbs < carbFloor ? `下限まであと ${carbFloor - carbs}g` : `下限達成${carbs > carbFloor ? ` +${carbs - carbFloor}g` : ""}`;
+  // 21時以降（深夜0〜3時も同じ論理日）で下限まで50g以上残っていたら、責めないリマインドを一言
+  const nowH = new Date().getHours();
+  const carbRemind = isToday && (nowH >= 21 || nowH < 3) && (carbFloor - carbs) >= 50;
   animNext = { key, gauge: pct, carb: carbPct }; // FLIP用に今回の描画値を記録
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOm = day.foods.some((f) => f.omega3);
@@ -965,7 +1091,12 @@ function renderLog() {
       ${ACTS.map((t) =>
         `<button class="dt ${t==="aerobic"?"aero":"active"} ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
-    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${active?"運動日":"休養日"}</b> · 今週の有酸素 <b class="mono">${weeklyAerobic(key)}</b>/1〜2${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで運動日）" : ""}</div>
+    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${DAY_KIND_LABEL[dayKind(day)]}</b> · 💪 今週の筋トレ <b class="mono" style="color:${weeklyTrain(key) >= 2 ? "var(--green)" : "var(--text)"}">${weeklyTrain(key)}</b>/2 · 有酸素 <b class="mono">${weeklyAerobic(key)}</b>（維持）${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで実績）" : ""}</div>
+    ${(() => {
+      // §6 金曜時点で今週の筋トレ0回のときだけ、責めないリマインドを一度（毎日は出さない）
+      const dow = new Date(key.split("-")[0], key.split("-")[1]-1, key.split("-")[2]).getDay();
+      return isToday && dow === 5 && weeklyTrain(key) === 0 ? `<div class="walknote">💪 今週の筋トレがまだです。30分×2枠、どこに入れますか？（土日でも2回入ります）</div>` : "";
+    })()}
     ${(() => {
       const rem = PACE.filter((row) => pc[row.key] < row.target).map((row) => `${row.label.split("・")[0]}あと${row.target - pc[row.key]}`);
       return `<button class="pacesum ${rem.length ? "" : "done"}" data-pacejump><span class="txt">${rem.length ? `今週の残り：${rem.join("・")}` : "今週の食材 ✓"}</span><span class="more">詳細 ›</span></button>`;
@@ -1029,19 +1160,18 @@ function renderLog() {
       const achieved = total >= target;
       const gaugeBig = !achieved || gaugeOpen;
       const carbCard = (main) => `
-    <div class="card carbcard ${carbHot?"hot":""}">
+    <div class="card carbcard">
       <div style="display:flex;align-items:baseline;justify-content:space-between">
-        <div style="font-size:14px;color:var(--muted)">糖質（目安 ${carbLimit}g${carbBand ? "＋活動補正" : ""}／${active?"運動日":"休養日"}）</div>
+        <div style="font-size:14px;color:var(--muted)">糖質（下限 ${carbFloor}g／${DAY_KIND_LABEL[kind]}）</div>
         <div><span class="mono" style="font-size:${main ? 34 : 26}px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:15px;color:var(--muted)"> g</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
         <div class="hbar" style="position:relative${main ? ";height:14px" : ""}">
           <div class="fill" data-carbfill style="width:${carbPct}%;background:${carbColor}"></div>
-          ${carbBand ? `<div style="position:absolute;top:0;bottom:0;left:${(carbLimit / carbMax) * 100}%;right:0;background:rgba(95,201,222,.14);border-left:1px dashed var(--ice)" title="活動補正+50g"></div>` : ""}
         </div>
-        <span class="mono" style="flex-shrink:0;font-size:14px;color:var(--muted)">${carbDiff}</span>
+        <span class="mono" style="flex-shrink:0;font-size:14px;color:${carbs >= carbFloor ? "var(--green)" : "var(--muted)"}">${carbDiff}</span>
       </div>
-      ${carbHot ? `<div style="font-size:13px;color:var(--amber);margin-top:6px">目安超え。食後の散歩がおすすめ。</div>` : ""}
+      ${carbRemind ? `<div style="font-size:13px;color:var(--ice);margin-top:6px">下限まであと${carbFloor - carbs}g。おにぎり1個で+40gです。</div>` : ""}
     </div>`;
       const gauge = gaugeBig ? `
     <div class="gaugewrap" ${achieved ? `data-gaugetoggle style="cursor:pointer"` : ""}>
@@ -1056,12 +1186,12 @@ function renderLog() {
         <div class="gtarget">今日の目標 ${target}g（${actLabel(day)}）</div>
         <div class="statusrow">
           <span class="box ${hitFloor?"on":""}">${hitFloor?"✓":""}</span>
-          <span>基準 100g</span>
+          <span>基準 ${FLOOR}g</span>
           <span class="detail mono" style="color:${hitFloor?"var(--green)":"var(--muted)"}">${hitFloor?"到達 · 合格":`あと ${FLOOR-total}g`}</span>
         </div>
         <div class="statusrow" style="opacity:${active?1:.5}">
           <span class="box ${hitCeil?"on":""}">${hitCeil?"✓":""}</span>
-          <span>運動日目標 120g</span>
+          <span>筋トレ・高強度日 ${CEILING}g</span>
           <span class="detail mono" style="color:${hitCeil?"var(--green)":"var(--muted)"}">${hitCeil?"到達":`あと ${CEILING-total}g`}</span>
         </div>
         ${wavg != null ? `<div class="weekavg">直近7日平均　<span class="mono" style="color:var(--text);font-size:16px">${wavg}g</span></div>` : ""}
@@ -1093,6 +1223,15 @@ function renderLog() {
       if (day.creatine == null && hasCreatineFood(day)) auto.push("💊クレアチン");
       if (day.vitd == null && hasVitdFood(day)) auto.push("☀️ビタミンD");
       return auto.length ? `<div class="walknote">${auto.join("・")} は食事記録から自動チェック済み。</div>` : "";
+    })()}
+    ${(() => {
+      // §4-4 測定ティッカー（③ストックへの入口。ホームでは1行だけ・リマインドは日曜夜のみ）
+      const done = measThisWeek(key);
+      const items = [["握力", done.grip], ["膝壁", done.knee], ["ハング", done.hang]];
+      const allDone = items.every(([, d]) => d);
+      const now = new Date();
+      const sundayNight = isToday && now.getDay() === 0 && now.getHours() >= 18 && !allDone;
+      return `<button class="pacesum ${allDone ? "done" : ""}" data-measjump style="margin-top:8px"><span class="txt">📏 今週の測定：${items.map(([l, d]) => `${l} ${d ? "✓" : "未"}`).join(" ／ ")}${sundayNight ? "　— 今夜どれか1つどうぞ" : ""}</span><span class="more">測定 ›</span></button>`;
     })()}
 
     <div class="foodlist">
@@ -1174,6 +1313,25 @@ function renderLog() {
         ${w7 != null ? `<span class="tilelabel mono">7日平均 ${w7}</span>` : ""}
       </div>
     </div>
+    ${(() => {
+      // §5-3 増量サマリカード：体重記録がある時だけ。ペースは7日移動平均の30日前比
+      const bp = bulkPace();
+      if (bp.cur == null) return "";
+      const pace = bp.delta;
+      const paceTxt = pace == null ? `<span style="color:var(--muted)">ペース判定はデータ30日分から</span>`
+        : pace < 0 ? `<span style="color:var(--amber)">今月 ${pace.toFixed(1)}kg — 減っています。食事量の見直しを</span>`
+        : pace < GOALS.weightRateMin ? `<span style="color:var(--ice)">今月 +${pace.toFixed(1)}kg — 増えていません。おにぎり1個＋プロテイン1杯の上乗せを検討</span>`
+        : pace <= GOALS.weightRateMax ? `<span style="color:var(--green)">今月 +${pace.toFixed(1)}kg 🟢 順調</span>`
+        : `<span style="color:var(--ice)">今月 +${pace.toFixed(1)}kg — ペース速め。体脂肪率も確認を</span>`;
+      const mus = latestBody("muscle");
+      const fat = latestBody("fatpct");
+      return `<div class="section" style="padding-top:0;padding-bottom:8px"><div class="card" style="padding:12px 14px">
+        <div style="font-size:15px">⚖️ <b class="mono">${fmt1(day.weight) || "—"}</b>kg（7日平均 <b class="mono">${bp.cur.toFixed(1)}</b>）｜目標 <b class="mono">${GOALS.weightTarget}</b></div>
+        <div style="font-size:13px;margin-top:6px">${paceTxt}</div>
+        ${mus ? `<div style="font-size:13px;color:var(--muted);margin-top:4px">筋量 <b class="mono" style="color:var(--green)">${mus.v}</b>kg${fat ? ` ・体脂肪 <b class="mono">${fat.v}</b>%` : ""}</div>` : ""}
+        ${fat && fat.v > GOALS.fatCeil ? `<div style="font-size:13px;color:var(--ice);margin-top:4px">体脂肪率が${GOALS.fatCeil}%を上回っています。間食の内容を糖質・たんぱく質中心に寄せてみましょう（増量は継続でOK）。</div>` : ""}
+      </div></div>`;
+    })()}
 
     <div class="section" style="padding-bottom:8px">
       <div class="seclabel">測定データ（InBody・Fitbit等のスクショ）</div>
@@ -1235,6 +1393,135 @@ function renderLog() {
   `;
 }
 
+// ---------- 測定ビュー（③身体能力ストック。フローと混ぜない専用画面） ----------
+// 2系列（右/左）対応の折れ線。x座標は実際の日付位置（欠測期間の傾きを歪めない）
+function measChart(def, series, spanDays) {
+  const pts = series.map((s) => {
+    const dif = spanDays - 1 - Math.round((logicalToday() - new Date(s.key.split("-")[0], s.key.split("-")[1] - 1, s.key.split("-")[2])) / 86400000);
+    const lb = `${Number(s.key.split("-")[1])}/${Number(s.key.split("-")[2])}`;
+    return def.sides
+      ? { di: dif, label: lb, R: s.m[def.key + "R"], L: s.m[def.key + "L"] }
+      : { di: dif, label: lb, R: s.m[def.key] };
+  }).filter((p) => p.R != null || p.L != null);
+  if (!pts.length) return `<div style="font-size:14px;color:var(--muted);padding:10px 0">まだ記録がありません。下のフォームか入力欄（例：「${def.label === "握力" ? "握力 右44 左44" : def.label === "デッドハング" ? "ハング 35秒" : def.label + " 右9 左8.5"}」）でどうぞ。</div>`;
+  const W = 448, H = 140, padL = 36, padB = 18, padT = 10;
+  const vs = pts.flatMap((p) => [p.R, p.L]).filter((v) => v != null).concat(def.target != null ? [def.target] : []);
+  const lo = Math.min(...vs) - 1, hi = Math.max(...vs) + 1;
+  const x = (p) => padL + (W - padL - 8) * (spanDays === 1 ? 0.5 : p.di / (spanDays - 1));
+  const y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo));
+  const line = (k, color) => {
+    const sp = pts.filter((p) => p[k] != null);
+    if (!sp.length) return "";
+    return `<path d="${sp.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p[k]).toFixed(1)}`).join(" ")}" fill="none" stroke="${color}" stroke-width="2"/>` +
+      sp.map((p) => `<circle cx="${x(p).toFixed(1)}" cy="${y(p[k]).toFixed(1)}" r="3" fill="${color}"/>`).join("");
+  };
+  const anch = (px) => px - padL < 16 ? "start" : (W - 8) - px < 16 ? "end" : "middle";
+  const labels = pts.map((p, i) => (pts.length <= 6 || i === 0 || i === pts.length - 1)
+    ? `<text x="${x(p).toFixed(1)}" y="${H-4}" font-size="13" fill="#8598A6" text-anchor="${anch(x(p))}">${p.label}</text>` : "").join("");
+  const axis = [lo, (lo + hi) / 2, hi].map((v) =>
+    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="13" fill="#8598A6" text-anchor="end">${v.toFixed(1)}</text>`).join("");
+  const grid = [lo, (lo + hi) / 2, hi].map((v) =>
+    `<line x1="${padL}" x2="${W-8}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
+  const tgt = def.target != null ? `<line x1="${padL}" x2="${W-8}" y1="${y(def.target).toFixed(1)}" y2="${y(def.target).toFixed(1)}" stroke="#7FD68B" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${W-8}" y="${(y(def.target)-4).toFixed(1)}" font-size="12" fill="#7FD68B" text-anchor="end">目標 ${def.target}</text>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
+    ${grid}${axis}${tgt}${line("R", "#5FC9DE")}${def.sides ? line("L", "#9D8CE0") : ""}${labels}
+  </svg>${def.sides ? `<div class="chartnote"><span style="color:#5FC9DE">━ 右</span>　<span style="color:#9D8CE0">━ 左</span></div>` : ""}`;
+}
+// 測定トレンド：代表値（両側平均）の前回比と連続低下数。better="down"は小さいほど良い種目
+function measTrend(def, series) {
+  const rep = series.map((s) => {
+    const vs = def.sides ? [s.m[def.key + "R"], s.m[def.key + "L"]].filter((v) => v != null) : [s.m[def.key]].filter((v) => v != null);
+    return vs.length ? { key: s.key, v: vs.reduce((a, b) => a + b, 0) / vs.length } : null;
+  }).filter(Boolean);
+  if (!rep.length) return null;
+  const last = rep[rep.length - 1], prev = rep.length > 1 ? rep[rep.length - 2] : null, base = rep[0];
+  let decl = 0;
+  for (let i = rep.length - 1; i > 0; i--) {
+    const d = rep[i].v - rep[i - 1].v;
+    if (def.better === "down" ? d > 0 : d < 0) decl++; else break;
+  }
+  return { last, prev, base, decl, n: rep.length };
+}
+function renderMeasure() {
+  const SPAN = 92; // 直近3ヶ月
+  const series = measSeries(SPAN);
+  const todayKey = toKey(logicalToday());
+  const todayMeas = (data[todayKey] && data[todayKey].meas) || {};
+  const cards = MEAS_DEF.map((def) => {
+    const tr = measTrend(def, series);
+    const fmtV = (v) => v == null ? "—" : (Math.round(v * 10) / 10) + "";
+    let head = "", note = "";
+    if (tr) {
+      const latest = series[series.length - 1] && series.filter((s) => (def.sides ? s.m[def.key + "R"] != null || s.m[def.key + "L"] != null : s.m[def.key] != null)).slice(-1)[0];
+      const lv = latest ? latest.m : {};
+      head = def.sides
+        ? `<b class="mono" style="font-size:20px">${fmtV(lv[def.key + "R"])}</b><small style="color:var(--muted)">右</small> <b class="mono" style="font-size:20px">${fmtV(lv[def.key + "L"])}</b><small style="color:var(--muted)">左</small> <small class="mono" style="color:var(--muted)">${def.unit}</small>`
+        : `<b class="mono" style="font-size:20px">${fmtV(lv[def.key])}</b> <small class="mono" style="color:var(--muted)">${def.unit}</small>`;
+      if (tr.prev) {
+        const d = tr.last.v - tr.prev.v;
+        const good = def.better === "down" ? d < 0 : d > 0;
+        const dTxt = `${d > 0 ? "+" : ""}${(Math.round(d * 10) / 10)}${def.unit}`;
+        // 上向きは必ず肯定。停滞・低下は事実のみ淡々と（責めない）。3回連続低下のみ疲労の可能性に触れる
+        note = good ? `<span style="color:var(--green)">前回比 ${dTxt}。${def.key === "grip" ? "増量が効いています" : def.key === "box" ? "着実に下がっています" : "前進しています"}</span>`
+          : tr.decl >= 3 ? `<span style="color:var(--muted)">前回比 ${dTxt}。疲労が残っていませんか？測定日を練習と離してみましょう</span>`
+          : `<span style="color:var(--muted)">前回比 ${dTxt}</span>`;
+        note += `<span style="color:var(--muted)">　·　開始時比 ${(() => { const b = tr.last.v - tr.base.v; return `${b > 0 ? "+" : ""}${Math.round(b * 10) / 10}${def.unit}`; })()}</span>`;
+      } else note = `<span style="color:var(--muted)">ベースライン記録済み（比較は2回目から）</span>`;
+      if (def.key === "knee" && tr.last && def.sides) {
+        const latest2 = series.filter((s) => s.m.kneeR != null && s.m.kneeL != null).slice(-1)[0];
+        if (latest2 && Math.abs(latest2.m.kneeR - latest2.m.kneeL) > 1.5) note += `<br><span style="color:var(--ice)">左右差が1.5cmを超えています。狭い側を中心にモビリティを。</span>`;
+      }
+    }
+    return `<div class="chartbox">
+      <div class="seclabel">${def.label}${def.target != null ? `<span style="font-weight:400;color:var(--muted)">　目標 ${def.target}${def.unit}${def.sides ? "（左右とも）" : ""}</span>` : def.key === "box" ? `<span style="font-weight:400;color:var(--muted)">　目標 箱なしフル</span>` : ""}</div>
+      ${head ? `<div style="margin-top:6px">${head}</div>` : ""}
+      ${note ? `<div style="font-size:13px;margin-top:4px">${note}</div>` : ""}
+      ${measChart(def, series, SPAN)}
+      <div class="chartnote">${def.note}</div>
+    </div>`;
+  }).join("");
+  const notes = [];
+  for (let i = SPAN - 1; i >= 0; i--) {
+    const d = new Date(logicalToday()); d.setDate(d.getDate() - i);
+    const dd = data[toKey(d)];
+    if (dd && dd.measNote) notes.push({ key: toKey(d), note: dd.measNote });
+  }
+  return `
+    <div class="section" style="padding-bottom:8px">
+      <div class="seclabel">📏 今日の測定を記録</div>
+      <div class="card" style="margin-top:10px;padding:12px 14px">
+        ${MEAS_DEF.map((def) => `
+        <div style="display:flex;align-items:center;gap:8px;margin:6px 0">
+          <span style="font-size:14px;flex:1">${def.label}<small style="color:var(--muted)">（${def.unit}）</small></span>
+          ${def.sides ? `
+            <input class="numinput mono" data-measfield="${def.key}R" inputmode="decimal" placeholder="右" value="${todayMeas[def.key + "R"] ?? ""}" style="width:62px">
+            <input class="numinput mono" data-measfield="${def.key}L" inputmode="decimal" placeholder="左" value="${todayMeas[def.key + "L"] ?? ""}" style="width:62px">`
+          : `<input class="numinput mono" data-measfield="${def.key}" inputmode="decimal" placeholder="秒" value="${todayMeas[def.key] ?? ""}" style="width:62px">`}
+        </div>`).join("")}
+        <div class="hint" style="margin-top:8px">入力欄の自然文でもOK：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」</div>
+      </div>
+    </div>
+    ${cards}
+    <div class="chartbox">
+      <div class="seclabel">⚖️ 体重・筋量・体脂肪（①から参照）</div>
+      ${(() => {
+        const days = [];
+        for (let i = 29; i >= 0; i--) {
+          const d = new Date(logicalToday()); d.setDate(d.getDate() - i);
+          const k = toKey(d), dd = data[k];
+          days.push({ label: `${d.getMonth()+1}/${d.getDate()}`,
+            weight: dd && dd.weight ? Number(dd.weight) : null,
+            muscle: dd && dd.muscle != null ? Number(dd.muscle) : null });
+        }
+        return weightChart(days) + compChart(days, "muscle", "#7FD68B", "kg");
+      })()}
+    </div>
+    ${notes.length ? `<div class="section" style="padding-top:0"><div class="seclabel">未分類の測定メモ</div>
+      ${notes.map((n) => `<div class="card" style="margin-top:8px;padding:10px 14px;font-size:14px"><span class="mono" style="color:var(--muted)">${n.key.slice(5)}</span>　${esc(n.note).replace(/\n/g, "<br>")}</div>`).join("")}
+    </div>` : ""}
+  `;
+}
+
 function renderReview() {
   const today = logicalToday();
   const days = [];
@@ -1273,14 +1560,14 @@ function renderReview() {
     </div>
     <div class="sumgrid">
       <div class="sumcard"><div class="sumlabel">平均たんぱく質</div><div><span class="sumval mono" style="color:${avgP>=FLOOR?"var(--green)":"var(--ice)"}">${avgP}</span><span class="sumunit mono"> g</span></div><div class="sumnote">記録 ${logged.length}日</div></div>
-      <div class="sumcard"><div class="sumlabel">基準100g 達成</div><div><span class="sumval mono" style="color:var(--green)">${floorDays}</span><span class="sumunit mono">/${logged.length}日</span></div><div class="sumnote">合格した日数</div></div>
+      <div class="sumcard"><div class="sumlabel">基準${FLOOR}g 達成</div><div><span class="sumval mono" style="color:var(--green)">${floorDays}</span><span class="sumunit mono">/${logged.length}日</span></div><div class="sumnote">合格した日数</div></div>
       <div class="sumcard"><div class="sumlabel">💊 クレアチン</div><div><span class="sumval mono" style="color:${creDays===logged.length&&logged.length?"var(--green)":"var(--ice)"}">${creDays}</span><span class="sumunit mono">/${logged.length}日</span></div><div class="sumnote">ビタミンD ${vdDays}日</div></div>
       <div class="sumcard"><div class="sumlabel">魚(オメガ3)</div><div><span class="sumval mono" style="color:var(--ice)">${om3Days}</span><span class="sumunit mono"> 日</span></div><div class="sumnote">緑黄${vegDays}·繊維${fiDays}日</div></div>
     </div>
     <div class="chartbox">
       <div class="seclabel">たんぱく質の推移</div>
       ${proteinChart(days)}
-      <div class="chartnote">緑の破線＝基準100g／橙線＝運動日目標120g</div>
+      <div class="chartnote">緑の破線＝基準${FLOOR}g／橙線＝筋トレ・高強度日${CEILING}g</div>
     </div>
     <div class="chartbox">
       <div class="seclabel">⚖️ 体重の推移</div>
@@ -1506,6 +1793,17 @@ function bindEvents() {
   document.querySelectorAll("[data-menutoggle]").forEach((b) =>
     b.addEventListener("click", () => { menuOpen = !menuOpen; render(); }));
   const pt = $("[data-pacetoggle]"); if (pt) pt.addEventListener("click", () => { paceOpen = !paceOpen; render(); });
+  const mj = $("[data-measjump]"); if (mj) mj.addEventListener("click", () => { view = "measure"; render(); });
+  document.querySelectorAll("[data-measfield]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      // 測定ビューの構造化入力は常に「今日（論理日）」へ記録
+      const key = toKey(logicalToday());
+      const cur = Object.assign({}, (data[key] && data[key].meas) || {});
+      const v = inp.value.trim();
+      if (v === "" || isNaN(Number(v))) delete cur[inp.dataset.measfield];
+      else cur[inp.dataset.measfield] = Number(v);
+      updateDay(key, { meas: cur });
+    }));
   document.querySelectorAll("[data-gaugetoggle]").forEach((b) =>
     b.addEventListener("click", () => { gaugeOpen = !gaugeOpen; render(); }));
   const bgt = $("[data-bgtoggle]"); if (bgt) bgt.addEventListener("click", () => { bgOpen = !bgOpen; render(); });

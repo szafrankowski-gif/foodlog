@@ -8,18 +8,20 @@
 - データ：localStorage（`mealog:data`）＋GitHub秘密Gistへの自動同期（`foodlog-data.json`）。マージは日付キーごとに`_m`（更新エポックms）が新しい方を採用。**起動時pullが完了するまでpushしない**（syncReadyガード）— この順序を壊すと他端末のデータを消す。
 - AI機能：Anthropic API直叩き。食事概算=Haiku、写真・評価（ばかお）・スクショ読取=Sonnet。APIキー・GHトークンはlocalStorageのみ。
 
-## 設計原則（変更禁止。変更はチャット側のチーム会議決定が必要）
+## 設計原則（変更禁止。変更はチャット側のチーム会議決定が必要。現行はv3.1増量フェーズ＝2026-07-23決定）
 1. **30秒ルール**：記録は1日30秒以内。入力を増やす機能は原則却下。自動化・写真・スクショ読取で解決する。
-2. **実績ベース判定**：運動日/休養日は宣言でなく実績から自動判定。筋トレ(trainA/B)は1種目以上チェックで運動日。climb/mountainはトグル＝実績。
-3. **aerobicは運動日判定に影響させない**（糖質目標を変えない、週次カウントのみ）。
+2. **実績ベース判定**：日区分（筋トレ日/高強度日/休養日）は宣言でなく実績から自動判定。筋トレ(trainA/B)は1種目以上チェックで筋トレ日。climb/jiujitsu/mountainはトグル＝実績で高強度日（目標は筋トレ日と同じ）。
+3. **aerobicは日区分判定に影響させない**（糖質目標を変えない、週次カウントのみ）。増量フェーズでは維持レベル扱い：散歩・ウォーキングを運動実績として加点しない（記録・保存は従来どおり）。
 4. **歩数は参考表示のみ**。目標・警告に使わない。唯一の例外：休養日15,000歩超で糖質+40〜50gの一言提案（目標値自体は不変）。
-5. **カロリー・脂質は数値管理しない**。消費カロリー・摂取カロリーの記録/表示/計算機能を追加しない。
-6. **評価トーン**：称賛インフレ禁止・未達を責めない。ばかおプロンプトのトーン指示を維持。
+5. **カロリー・脂質は数値管理しない**。消費カロリー・摂取カロリーの記録/表示/計算機能を追加しない（メッセージ文言にもkcal数値を出さない）。
+6. **評価トーン**：称賛インフレ禁止・未達を責めない。増量フェーズは「食べる量を増やす」方向のみ助言し、減らす方向の文言を出さない。「食べすぎ」「オーバー」等の語をコードに含めない（grepで確認）。
 7. 食材ペースは**月曜始まり・日曜締めの固定週**（WEEK_START=1）。
 8. 食事時刻の優先順位：本文の時刻指定 > 写真EXIF(DateTimeOriginal) > lastModified > 今日なら現在時刻 > null。過去日の後入力に時刻を捏造しない。
+9. **糖質は下限管理**（v3.1〜）：上限の概念なし。下限未達だけを扱い、超過を警告しない。目標値はGOALS定数に一元管理し、機能側にハードコードしない。
+10. **フローとストックを混ぜない**（v3.1〜）：日次フロー（①食事・睡眠・体重）/実施ログ（②筋トレ・moves）/身体能力ストック（③day.meas）は別性質。③は測定タブ専用、ホームは1行ティッカーのみ。測定リマインドは週1（日曜夜）だけ。
 
 ## データスキーマ（day オブジェクト）
-`{ foods: [{name, p, c, veg, omega3, fiber, cat, t}], acts: ["trainA"|"trainB"|"climb"|"mountain"|"aerobic"], workout: {checks:[], note}, sleep, bedtime, waketime, weight, muscle, fatpct, rhr, steps, mood, wrist, creatine, vitd, comment, _m }`
+`{ foods: [{name, p, c, veg, omega3, fiber, cat, t}], acts: ["trainA"|"trainB"|"climb"|"jiujitsu"|"mountain"|"aerobic"], actTimes: {}, workout: {checks:[], note}, moves: [{kind, min, t}], sleep, bedtime, waketime, weight, muscle, fatpct, rhr, steps, mood, wrist, creatine, vitd, comment, meas: {gripR,gripL,kneeR,kneeL,boxR,boxL,hang}, measNote, _m }`
 - 後方互換を壊さない。旧フィールド（dayType等）はload()で移行。新フィールドはnull安全に。
 
 ## 変更時の必須手順
