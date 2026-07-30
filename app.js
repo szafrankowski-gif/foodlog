@@ -8,7 +8,7 @@ const GOALS = {
   weightTarget: 64.5,                            // 増量目標kg
   weightRateMax: 0.5, weightRateMin: 0.2,        // 月あたり増加ペースの適正範囲kg
   fatCeil: 16.0,                                 // 体脂肪率ガード%
-  grip: 49.0, knee: 12.0,                        // 測定目標：握力kg（左右とも）・膝壁cm
+  grip: 49.0, knee: 12.0, dips: 15,              // 測定目標：握力kg（左右とも）・膝壁cm・ディップス自重回数
 };
 const FLOOR = GOALS.proteinBase, CEILING = GOALS.proteinTrain;
 const CARB_FLOOR = { rest: GOALS.carbFloorRest, active: GOALS.carbFloorTrain }; // 血糖対策は量でなく質とタイミングで
@@ -88,22 +88,23 @@ function weeklyTrain(anchorKey) {
   return n;
 }
 
+// v3.2確定メニュー（KB24kg＋ディップススタンド前提・下半身優先）。アプリは記録係：メニュー管理機能は持たない
 const MENU = {
   trainA: [
-    { id: "rdl",     name: "KB RDL",             spec: "16kg 10×3・3秒下ろし" },
-    { id: "goblet",  name: "ゴブレットスクワット", spec: "16kg 10×3・下で2秒" },
-    { id: "swing",   name: "KBスイング",          spec: "16kg 15×3" },
-    { id: "cossack", name: "コサックスクワット",   spec: "左右6×3" },
-    { id: "calf",    name: "片脚カーフレイズ",     spec: "KB保持 12×2" },
+    { id: "ankle",     name: "足首モビリティ",           spec: "W-up 5分" },
+    { id: "kbdl",      name: "KBデッドリフト",           spec: "24kg 8×4（→スイング移行予定）" },
+    { id: "goblet",    name: "ゴブレットスクワット",       spec: "24kg 8〜10×3" },
+    { id: "boxpistol", name: "ボックスピストル",          spec: "左右5×3・箱を漸進的に低く" },
+    { id: "calf",      name: "フルレンジ・カーフレイズ",   spec: "15〜20×3" },
+    { id: "sideplank", name: "サイドプランク＋外転",       spec: "左右30秒×2" },
   ],
   trainB: [
-    { id: "pullup",  name: "懸垂",               spec: "できる回数×3" },
-    { id: "row",     name: "片手ロウ",           spec: "8-10kg 10×3" },
-    { id: "pushup",  name: "PUバー腕立て",        spec: "10×3" },
-    { id: "ohp",     name: "ショルダープレス",     spec: "中立 8-10kg 10×3" },
-    { id: "extrot",  name: "外旋（腱板）",         spec: "2-3kg 15×3" },
-    { id: "plank",   name: "肘つきプランク",       spec: "30秒×3" },
-    { id: "neck",    name: "首アイソメ",           spec: "前後左右 各10秒×3" },
+    { id: "dips",    name: "ディップス",                spec: "限界-1×4（10回超で加重）" },
+    { id: "kbpress", name: "KBショルダープレス片手",     spec: "左右6〜8×3" },
+    { id: "invrow",  name: "インバーテッドロウ",         spec: "8〜12×3" },
+    { id: "hold",    name: "スーツケースホールド",       spec: "24kg 左右30〜40秒×3" },
+    { id: "hang",    name: "デッドハング（太グリップ）",  spec: "30秒×2・週次測定を兼ねる" },
+    { id: "neck",    name: "首アイソメ",                spec: "各方向10秒" },
   ],
 };
 
@@ -366,18 +367,36 @@ const MEAS_DEF = [
     note: "更新時に随時。箱が低いほど進歩（目標：箱なしフル）" },
   { key: "hang", label: "デッドハング", unit: "秒", sides: false, better: "up", target: null,
     note: "週1（筋トレB日）。グリップ持久の指標" },
+  // v3.2追加：ディップスは自重(dips)と加重(dipsW・重量dipsWkg)を別系列で持つ（Y軸が混ざるため）
+  { key: "dips", label: "ディップス", unit: "回", sides: false, better: "up", target: GOALS.dips, dual: ["自重", "加重"],
+    note: "週1（筋トレB日）。加重を始めたら「ディップス +8kg 6回」で別系列に記録" },
+  { key: "swing", label: "KBスイング連続", unit: "回", sides: false, better: "up", target: null,
+    empty: "スイング移行後（8月中旬見込み）に記録を始めます。それまで未記録で正常です。",
+    note: "移行後・週1（筋トレA日）" },
+  { key: "hold", label: "スーツケースホールド", unit: "秒", sides: true, better: "up", target: null,
+    note: "任意記録（Bの種目）。「ホールド 右40秒 左35秒」" },
 ];
 // 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
 // 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース失敗はmeasNoteに保存し測定ビューで分類可能に
 function parseMeasText(text) {
   const t = text.trim();
-  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング)/.exec(t);
+  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|ディップス|(?:KB)?スイング|(?:スーツケース)?ホールド)/.exec(t);
   if (!head) return null;
-  const key = { "握力": "grip", "膝壁": "knee" }[head[1]] || (head[1].startsWith("ピストル") ? "box" : "hang");
+  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips" }[head[1]]
+    || (head[1].startsWith("ピストル") ? "box" : head[1].endsWith("スイング") ? "swing" : head[1].endsWith("ホールド") ? "hold" : "hang");
   const r = /右[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t), l = /左[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t);
   const nums = (t.slice(head[1].length).match(/\d{1,3}(?:\.\d+)?/g) || []).map(Number);
   const meas = {};
-  if (key === "hang") {
+  if (key === "dips") {
+    // 「ディップス 9回」＝自重／「ディップス +8kg 6回」＝加重（別系列）
+    const w = /[+＋][\s　]*(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)[\s　]*(\d{1,3})[\s　]*回?/.exec(t);
+    if (w) { meas.dipsWkg = Number(w[1]); meas.dipsW = Number(w[2]); }
+    else if (nums.length) meas.dips = nums[0];
+    else return { note: t };
+  } else if (key === "swing") {
+    if (!nums.length) return { note: t };
+    meas.swing = nums[0];
+  } else if (key === "hang") {
     if (!nums.length) return { note: t };
     meas.hang = nums[0];
   } else if (r || l) {
@@ -555,7 +574,7 @@ async function fetchBakao(key) {
 
 目標：たんぱく質は基準${FLOOR}g（毎日必達）、筋トレ日・高強度日は${CEILING}gを目標にする（上限ではなく、超えても全く問題ない）。糖質は下限管理：休養日${GOALS.carbFloorRest}g・筋トレ/高強度日${GOALS.carbFloorTrain}gを下回らないことが目標で、上限は設けない（血糖対策は玄米優先・食後散歩・ドカ食い回避という質とタイミングで行い、総量は絞らない）。P残・C下限残があるときは、具体的な食品での埋め方をひとつ示す（例：おにぎり1個で糖質+40g、プロテイン1杯でP+20g）。
 
-筋トレ設計：週2必須・最優先（A=ヒンジ・脚／B=引く・押す・体幹）。筋力プロフィール：プル（背中）は競技者級で維持、グリップは強化対象（目標${GOALS.grip}kg）、ヒンジとプッシュが伸びしろで筋トレA/Bの主役。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレ翌日は回復（睡眠・たんぱく質）に一言触れてよい。翌朝の手首に違和感が出たら一段戻すルール。
+筋トレ設計：週2必須・最優先。KB24kg＋ディップススタンドの自宅メニュー（A=ヒンジ・下半身／B=プッシュ・グリップ）で、下半身優先方針（柔術・山・クライミングの3ゴールとも下半身が律速）。KBデッドリフト→スイング移行が当面の主軸で、スイングのフォーム習得期（〜8月中旬）は無理な回数増を促さない。筋力プロフィール：プル（背中）は競技者級で維持（クライミングが担う）、グリップは強化対象（目標${GOALS.grip}kg）、ヒンジとプッシュが伸びしろ。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレA翌日は殿筋・ハム、B翌日は胸・肩・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・ディップス回数・ハング秒・膝壁cm）の向上は増量の進捗として肯定的に扱う。翌朝の手首に違和感が出たら一段戻すルール。
 
 日区分の判定は「実績ベース」：筋トレのチェックがあれば筋トレ日、登攀・柔術・山行の実績があれば高強度日（目標は筋トレ日と同じ）、どちらもなければ休養日。宣言でなく実績で決まる。就寝2:30の目標は増量の一部（睡眠中の成長ホルモン＝筋合成）として扱い、遅れた日は責めずに就寝側だけ軽く指摘してよい。
 
@@ -1151,7 +1170,7 @@ function renderLog() {
     }).join("")}
     ${menuOpen && dayActs(day).some((a) => MENU[a]) ? `
     <div class="section" style="padding-top:0;padding-bottom:14px;margin-top:-8px">
-      <input class="setinput" data-wnote placeholder="メモ（例：RDL 18kgに上げた／スイング違和感で中止）"
+      <input class="setinput" data-wnote placeholder="メモ（例：A実施 KBDL24×8×4 ゴブレット24×10）"
         value="${esc((day.workout && day.workout.note) || "")}" style="font-size:15px">
     </div>` : ""}
 
@@ -1401,9 +1420,11 @@ function measChart(def, series, spanDays) {
     const lb = `${Number(s.key.split("-")[1])}/${Number(s.key.split("-")[2])}`;
     return def.sides
       ? { di: dif, label: lb, R: s.m[def.key + "R"], L: s.m[def.key + "L"] }
+      : def.dual
+      ? { di: dif, label: lb, R: s.m[def.key], L: s.m[def.key + "W"] }
       : { di: dif, label: lb, R: s.m[def.key] };
   }).filter((p) => p.R != null || p.L != null);
-  if (!pts.length) return `<div style="font-size:14px;color:var(--muted);padding:10px 0">まだ記録がありません。下のフォームか入力欄（例：「${def.label === "握力" ? "握力 右44 左44" : def.label === "デッドハング" ? "ハング 35秒" : def.label + " 右9 左8.5"}」）でどうぞ。</div>`;
+  if (!pts.length) return `<div style="font-size:14px;color:var(--muted);padding:10px 0">${def.empty || `まだ記録がありません。下のフォームか入力欄（例：「${def.label === "握力" ? "握力 右44 左44" : def.label === "デッドハング" ? "ハング 35秒" : def.label === "ディップス" ? "ディップス 9回" : def.sides ? def.label + " 右9 左8.5" : def.label + " 15"}」）でどうぞ。`}</div>`;
   const W = 448, H = 140, padL = 36, padB = 18, padT = 10;
   const vs = pts.flatMap((p) => [p.R, p.L]).filter((v) => v != null).concat(def.target != null ? [def.target] : []);
   const lo = Math.min(...vs) - 1, hi = Math.max(...vs) + 1;
@@ -1423,12 +1444,15 @@ function measChart(def, series, spanDays) {
   const grid = [lo, (lo + hi) / 2, hi].map((v) =>
     `<line x1="${padL}" x2="${W-8}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
   const tgt = def.target != null ? `<line x1="${padL}" x2="${W-8}" y1="${y(def.target).toFixed(1)}" y2="${y(def.target).toFixed(1)}" stroke="#7FD68B" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${W-8}" y="${(y(def.target)-4).toFixed(1)}" font-size="12" fill="#7FD68B" text-anchor="end">目標 ${def.target}</text>` : "";
+  const twoSeries = def.sides || def.dual;
+  const legend = def.dual ? def.dual : ["右", "左"];
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
-    ${grid}${axis}${tgt}${line("R", "#5FC9DE")}${def.sides ? line("L", "#9D8CE0") : ""}${labels}
-  </svg>${def.sides ? `<div class="chartnote"><span style="color:#5FC9DE">━ 右</span>　<span style="color:#9D8CE0">━ 左</span></div>` : ""}`;
+    ${grid}${axis}${tgt}${line("R", "#5FC9DE")}${twoSeries ? line("L", "#9D8CE0") : ""}${labels}
+  </svg>${twoSeries ? `<div class="chartnote"><span style="color:#5FC9DE">━ ${legend[0]}</span>　<span style="color:#9D8CE0">━ ${legend[1]}</span></div>` : ""}`;
 }
 // 測定トレンド：代表値（両側平均）の前回比と連続低下数。better="down"は小さいほど良い種目
 function measTrend(def, series) {
+  // dual（ディップス）は自重系列のみでトレンドを取る（加重はY軸が別）
   const rep = series.map((s) => {
     const vs = def.sides ? [s.m[def.key + "R"], s.m[def.key + "L"]].filter((v) => v != null) : [s.m[def.key]].filter((v) => v != null);
     return vs.length ? { key: s.key, v: vs.reduce((a, b) => a + b, 0) / vs.length } : null;
@@ -1496,7 +1520,7 @@ function renderMeasure() {
           ${def.sides ? `
             <input class="numinput mono" data-measfield="${def.key}R" inputmode="decimal" placeholder="右" value="${todayMeas[def.key + "R"] ?? ""}" style="width:62px">
             <input class="numinput mono" data-measfield="${def.key}L" inputmode="decimal" placeholder="左" value="${todayMeas[def.key + "L"] ?? ""}" style="width:62px">`
-          : `<input class="numinput mono" data-measfield="${def.key}" inputmode="decimal" placeholder="秒" value="${todayMeas[def.key] ?? ""}" style="width:62px">`}
+          : `<input class="numinput mono" data-measfield="${def.key}" inputmode="decimal" placeholder="${def.unit}" value="${todayMeas[def.key] ?? ""}" style="width:62px">`}
         </div>`).join("")}
         <div class="hint" style="margin-top:8px">入力欄の自然文でもOK：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」</div>
       </div>
