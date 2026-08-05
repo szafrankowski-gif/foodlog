@@ -1212,10 +1212,13 @@ function renderLog() {
       ${menuOpen ? `<div class="card pacebox">
         ${MENU[a].map((ex) => {
           const on = checks.includes(ex.id);
+          // v3.2でspecが長文化したため2行構造（種目名＋下にspecを折り返し）。1行時代のflex-shrink:0は名前を縦潰しにする
           return `<div class="pacerow" data-ex="${ex.id}" style="cursor:pointer">
             <span class="box lg ${on?"on":""}">${on?"✓":""}</span>
-            <span style="font-size:16px;flex:1;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</span>
-            <span style="font-size:13px;color:var(--muted);flex-shrink:0" class="mono">${ex.spec}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:16px;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</div>
+              <div style="font-size:13px;color:var(--muted);line-height:1.45" class="mono">${ex.spec}</div>
+            </div>
           </div>`;
         }).join("")}
       </div>` : ""}
