@@ -8,7 +8,9 @@ const GOALS = {
   weightTarget: 64.5,                            // 増量目標kg
   weightRateMax: 0.5, weightRateMin: 0.2,        // 月あたり増加ペースの適正範囲kg
   fatCeil: 16.0,                                 // 体脂肪率ガード%
-  grip: 49.0, knee: 12.0, dips: 15,              // 測定目標：握力kg（左右とも）・膝壁cm・ディップス自重回数
+  grip: 49.0, knee: 12.0,                        // 測定目標：握力kg（左右とも）・膝壁cm（懸垂は「加重化」が目標＝数値目標なし）
+  zone2Max: 90,                                  // Zone2 週合計上限（分。増量優先。禁止でなく表示と週1通知のみ）
+  midReview: 64.0,                               // 中間評価：この体重到達で再評価を一度だけ案内
 };
 const FLOOR = GOALS.proteinBase, CEILING = GOALS.proteinTrain;
 const CARB_FLOOR = { rest: GOALS.carbFloorRest, active: GOALS.carbFloorTrain }; // 血糖対策は量でなく質とタイミングで
@@ -87,24 +89,57 @@ function weeklyTrain(anchorKey) {
   }
   return n;
 }
+// Zone2の週間積算（分）：movesの散歩系分数を合算（v3.2：週90分上限の表示用。禁止はしない）
+function weeklyZone2(anchorKey) {
+  const w = weekInfo(anchorKey);
+  let min = 0;
+  for (let i = 0; i < w.dayN; i++) {
+    const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
+    for (const mv of (dd && dd.moves) || []) if (mv.kind === "walk") min += Number(mv.min) || 0;
+  }
+  return min;
+}
+// 柔術復帰ドリルの今週実施日数（day.drill。週1-2目標・未実施でも警告なし）
+function weeklyDrill(anchorKey) {
+  const w = weekInfo(anchorKey);
+  let n = 0;
+  for (let i = 0; i < w.dayN; i++) {
+    const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
+    if (dd && dd.drill) n++;
+  }
+  return n;
+}
+// 「一度だけ出す通知」の共通処理：初出日に記録し、その日のあいだは表示・以後は出さない
+function onceNote(storeKey, scope, active) {
+  if (!active) return false;
+  const today = toKey(logicalToday());
+  let flag = "";
+  try { flag = localStorage.getItem(storeKey) || ""; } catch (e) {}
+  if (!flag.startsWith(scope + ":")) {
+    flag = scope + ":" + today;
+    try { localStorage.setItem(storeKey, flag); } catch (e) {}
+  }
+  return flag === scope + ":" + today;
+}
 
-// v3.2確定メニュー（KB24kg＋ディップススタンド前提・下半身優先）。アプリは記録係：メニュー管理機能は持たない
+// v3.2改訂 確定メニュー（外部プラン統合・下半身/片脚系優先・進行はダブルプログレッション）。アプリは記録係：メニュー管理機能は持たない
 const MENU = {
-  trainA: [
-    { id: "ankle",     name: "足首モビリティ",           spec: "W-up 5分" },
-    { id: "kbdl",      name: "KBデッドリフト",           spec: "24kg 8×4（→スイング移行予定）" },
-    { id: "goblet",    name: "ゴブレットスクワット",       spec: "24kg 8〜10×3" },
-    { id: "boxpistol", name: "ボックスピストル",          spec: "左右5×3・箱を漸進的に低く" },
-    { id: "calf",      name: "フルレンジ・カーフレイズ",   spec: "15〜20×3" },
-    { id: "sideplank", name: "サイドプランク＋外転",       spec: "左右30秒×2" },
+  trainA: [ // 脚＋引く力（週1）
+    { id: "wupA",      name: "W-up",                  spec: "足首壁・90/90・自重スプリット・スキャプラ・軽ジャンプ" },
+    { id: "boxjump",   name: "ボックスジャンプ",        spec: "41cm 3×3・質重視" },
+    { id: "bulgarian", name: "ブルガリアンスクワット",   spec: "24kg 左右6-10×3" },
+    { id: "pullup",    name: "懸垂",                  spec: "3-6回×2-3S（ドラツー併行中は増やさない）" },
+    { id: "slrdl",     name: "片脚RDL",               spec: "24kg 左右6-10×3" },
+    { id: "kneeroll",  name: "膝コロ",                spec: "6-12×3" },
+    { id: "calf",      name: "片脚カーフレイズ（任意）", spec: "左右12-20×2-3" },
   ],
-  trainB: [
-    { id: "dips",    name: "ディップス",                spec: "限界-1×4（10回超で加重）" },
-    { id: "kbpress", name: "KBショルダープレス片手",     spec: "左右6〜8×3" },
-    { id: "invrow",  name: "インバーテッドロウ",         spec: "8〜12×3" },
-    { id: "hold",    name: "スーツケースホールド",       spec: "24kg 左右30〜40秒×3" },
-    { id: "hang",    name: "デッドハング（太グリップ）",  spec: "30秒×2・週次測定を兼ねる" },
-    { id: "neck",    name: "首アイソメ",                spec: "各方向10秒" },
+  trainB: [ // 登山脚＋押す・ロウ（週1）
+    { id: "wupB",    name: "W-up",                    spec: "キャット&カウ・ヒンジ・16kgスイング5×2・スキャプラPU・ステップアップ" },
+    { id: "swing",   name: "KBスイング",               spec: "24kg 5-8×5・速度が落ちたら終了" },
+    { id: "stepup",  name: "ステップアップ",           spec: "左右6-10×3（隔週でステップダウン 左右8-12×2-3）" },
+    { id: "push",    name: "押し種目（隔週交代）",       spec: "足上げプッシュアップ 6-15×3 ⇄ ディップス 限界-1×4" },
+    { id: "row",     name: "ワンハンドロウ",           spec: "24kg 左右8-12×3" },
+    { id: "march",   name: "スーツケースマーチ",        spec: "24kg 左右30-45秒×3" },
   ],
 };
 
@@ -360,42 +395,49 @@ function weightAvg7(anchor) {
 // day.meas = { gripR,gripL, kneeR,kneeL, boxR,boxL, hang } 数値のみ。記録がある日だけ持つ（後方互換：無ければnull安全）
 const MEAS_DEF = [
   { key: "grip", label: "握力", unit: "kg", sides: true, better: "up", target: GOALS.grip,
-    note: "週1・毎週同じ曜日推奨。クライミング/柔術の翌日は測定非推奨（疲労で値がぶれます）" },
+    note: "週1・毎週同じ曜日推奨。ドラツー/柔術の翌日は測定非推奨（疲労で値がぶれます）" },
   { key: "knee", label: "膝壁テスト", unit: "cm", sides: true, better: "up", target: GOALS.knee,
     note: "週1。左右差1.5cm超は足首モビリティの左右差サイン" },
-  { key: "box",  label: "ボックスピストル", unit: "cm", sides: true, better: "down", target: null,
-    note: "更新時に随時。箱が低いほど進歩（目標：箱なしフル）" },
+  // 懸垂・ディップスは自重系列と加重系列（+kg×回数）を別系列で持つ（Y軸が混ざるため）
+  { key: "pullup", label: "懸垂", unit: "回", sides: false, better: "up", target: null, dual: ["自重", "加重"],
+    note: "週1（A日）・ディップスと交代で主指標。加重は「懸垂 +5kg 4回」で別系列に（目標：加重化）" },
+  { key: "dips", label: "ディップス", unit: "回", sides: false, better: "up", target: null, dual: ["自重", "加重"],
+    empty: "未記録（押し種目は隔週交代のため、空き週があっても正常です）",
+    note: "隔週（B日・実施週のみ）。加重は「ディップス +8kg 6回」で別系列に" },
   { key: "hang", label: "デッドハング", unit: "秒", sides: false, better: "up", target: null,
-    note: "週1（筋トレB日）。グリップ持久の指標" },
-  // v3.2追加：ディップスは自重(dips)と加重(dipsW・重量dipsWkg)を別系列で持つ（Y軸が混ざるため）
-  { key: "dips", label: "ディップス", unit: "回", sides: false, better: "up", target: GOALS.dips, dual: ["自重", "加重"],
-    note: "週1（筋トレB日）。加重を始めたら「ディップス +8kg 6回」で別系列に記録" },
+    note: "週1。グリップ持久の指標" },
   { key: "swing", label: "KBスイング連続", unit: "回", sides: false, better: "up", target: null,
-    empty: "スイング移行後（8月中旬見込み）に記録を始めます。それまで未記録で正常です。",
-    note: "移行後・週1（筋トレA日）" },
-  { key: "hold", label: "スーツケースホールド", unit: "秒", sides: true, better: "up", target: null,
-    note: "任意記録（Bの種目）。「ホールド 右40秒 左35秒」" },
+    empty: "未記録でも正常（B日の実施時に「スイング 15回」で記録）",
+    note: "週1（B日）。速度が落ちたら終了＝フォーム優先で、回数は無理に増やさない" },
+  { key: "box",  label: "ボックスピストル", unit: "cm", sides: true, better: "down", target: null,
+    note: "現行メニュー外だが記録は継続受付。箱が低いほど進歩" },
+  { key: "jump", label: "ボックスジャンプ高さ", unit: "cm", sides: false, better: "up", target: null,
+    note: "更新時に随時（41→51→61）。質重視・記録がなくても正常" },
+  { key: "waist", label: "腹囲", unit: "cm", sides: false, better: "none", target: null,
+    note: "週1。増量の質の指標（体脂肪計の補完）。増減そのものは良し悪しにしない" },
 ];
 // 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
 // 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース失敗はmeasNoteに保存し測定ビューで分類可能に
+// 種目実績のフリーテキストメモ（例：「ブルガリアン 24kg 左10 右10」）→ 実施ログ（workout.note）へ
+const EXERCISE_MEMO_RE = /^(ブルガリアン|片脚RDL|膝コロ|ステップアップ|ステップダウン|ワンハンドロウ|(?:スーツケース)?(?:マーチ|ホールド)|足上げプッシュアップ|プッシュアップ)/;
 function parseMeasText(text) {
   const t = text.trim();
-  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|ディップス|(?:KB)?スイング|(?:スーツケース)?ホールド)/.exec(t);
+  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|懸垂|ディップス|(?:KB)?スイング|(?:ボックス)?ジャンプ|腹囲)/.exec(t);
   if (!head) return null;
-  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips" }[head[1]]
-    || (head[1].startsWith("ピストル") ? "box" : head[1].endsWith("スイング") ? "swing" : head[1].endsWith("ホールド") ? "hold" : "hang");
+  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips", "懸垂": "pullup", "腹囲": "waist" }[head[1]]
+    || (head[1].startsWith("ピストル") ? "box" : head[1].endsWith("スイング") ? "swing" : head[1].endsWith("ジャンプ") ? "jump" : "hang");
   const r = /右[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t), l = /左[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t);
   const nums = (t.slice(head[1].length).match(/\d{1,3}(?:\.\d+)?/g) || []).map(Number);
   const meas = {};
-  if (key === "dips") {
-    // 「ディップス 9回」＝自重／「ディップス +8kg 6回」＝加重（別系列）
+  if (key === "dips" || key === "pullup") {
+    // 「懸垂 5回」「ディップス 9回」＝自重／「懸垂 +5kg 4回」＝加重（別系列）
     const w = /[+＋][\s　]*(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)[\s　]*(\d{1,3})[\s　]*回?/.exec(t);
-    if (w) { meas.dipsWkg = Number(w[1]); meas.dipsW = Number(w[2]); }
-    else if (nums.length) meas.dips = nums[0];
+    if (w) { meas[key + "Wkg"] = Number(w[1]); meas[key + "W"] = Number(w[2]); }
+    else if (nums.length) meas[key] = nums[0];
     else return { note: t };
-  } else if (key === "swing") {
+  } else if (key === "swing" || key === "jump" || key === "waist") {
     if (!nums.length) return { note: t };
-    meas.swing = nums[0];
+    meas[key] = nums[0];
   } else if (key === "hang") {
     if (!nums.length) return { note: t };
     meas.hang = nums[0];
@@ -574,7 +616,7 @@ async function fetchBakao(key) {
 
 目標：たんぱく質は基準${FLOOR}g（毎日必達）、筋トレ日・高強度日は${CEILING}gを目標にする（上限ではなく、超えても全く問題ない）。糖質は下限管理：休養日${GOALS.carbFloorRest}g・筋トレ/高強度日${GOALS.carbFloorTrain}gを下回らないことが目標で、上限は設けない（血糖対策は玄米優先・食後散歩・ドカ食い回避という質とタイミングで行い、総量は絞らない）。P残・C下限残があるときは、具体的な食品での埋め方をひとつ示す（例：おにぎり1個で糖質+40g、プロテイン1杯でP+20g）。
 
-筋トレ設計：週2必須・最優先。KB24kg＋ディップススタンドの自宅メニュー（A=ヒンジ・下半身／B=プッシュ・グリップ）で、下半身優先方針（柔術・山・クライミングの3ゴールとも下半身が律速）。KBデッドリフト→スイング移行が当面の主軸で、スイングのフォーム習得期（〜8月中旬）は無理な回数増を促さない。筋力プロフィール：プル（背中）は競技者級で維持（クライミングが担う）、グリップは強化対象（目標${GOALS.grip}kg）、ヒンジとプッシュが伸びしろ。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレA翌日は殿筋・ハム、B翌日は胸・肩・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・ディップス回数・ハング秒・膝壁cm）の向上は増量の進捗として肯定的に扱う。翌朝の手首に違和感が出たら一段戻すルール。
+筋トレ設計：週2必須・最優先。自宅装備（KB16/24kg・プライオボックス・懸垂バー・ディップススタンド等）でA（脚＋引き）/B（登山脚＋押し・ロウ）の週2。片脚系・下半身優先（柔術・山・ドラツーの3ゴールとも下半身が律速）。加えてドライツーリング週1＋柔術復帰ドリル週1-2。懸垂は少なめの設定（2-3セット）が正しい状態で、増やすことを促さない（プルはドラツーが担う）。KBスイングはフォーム優先。「速度が落ちたら終了」を支持し回数増を煽らない。Zone2有酸素は週${GOALS.zone2Max}分上限（増量優先）。上限を上回っているときは回復を推す。グリップは強化対象（目標${GOALS.grip}kg）。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレA翌日は殿筋・ハム、B翌日は胸・肩・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・懸垂・ディップス・ハング・膝壁・腹囲）の向上は増量の進捗として肯定的に扱う。ただし腹囲が体重より明らかに速く増える傾向が続く場合のみ、体脂肪率の確認を軽く促す（減量提案はしない）。本人の記述に中止サイン（鼠径部の痛み・肘内側の一点痛・腰からのしびれ等）があれば、その種目の中止・変更と、続く場合の医療機関相談を勧める。体重が${GOALS.midReview}kgに到達している場合、中間評価（パフォーマンス再評価）のタイミングであることに一度だけ軽く触れてよい（毎回繰り返さない）。翌朝の手首に違和感が出たら一段戻すルール。
 
 日区分の判定は「実績ベース」：筋トレのチェックがあれば筋トレ日、登攀・柔術・山行の実績があれば高強度日（目標は筋トレ日と同じ）、どちらもなければ休養日。宣言でなく実績で決まる。就寝2:30の目標は増量の一部（睡眠中の成長ホルモン＝筋合成）として扱い、遅れた日は責めずに就寝側だけ軽く指摘してよい。
 
@@ -583,8 +625,9 @@ async function fetchBakao(key) {
 - 糖質：${carbs}g（下限${CARB_FLOOR[active ? "active" : "rest"]}g${carbs < CARB_FLOOR[active ? "active" : "rest"] ? `・下限まであと${CARB_FLOOR[active ? "active" : "rest"] - carbs}g` : "・下限達成"}）
 - 歩数：${day.steps != null ? day.steps.toLocaleString() + "歩（参考値。目標や警告には使わない。ただし休養日で15,000歩を超えている日は、糖質+40〜50g程度の追加補給に軽く触れてよい。責めない・警告調にしない）" : "記録なし"}
 - サプリ：クレアチン${creatineOn(day) ? "済" : "未"}／ビタミンD${vitdOn(day) ? "済" : "未"}（クレアチン3〜5gは毎日方針。未の日はごく軽く一言リマインドしてよい。説教はしない）
-- 有酸素（Zone2）：本日${dayActs(day).includes("aerobic") ? "実施" : "なし"}／今週${weeklyAerobic(key)}回（増量フェーズでは維持レベル。糖質目標には影響しない。未実施は全く問題にしない。話題の中心にしない）
+- Zone2有酸素：本日${dayActs(day).includes("aerobic") ? "実施" : "なし"}／今週の速歩等 ${weeklyZone2(key)}分（上限${GOALS.zone2Max}分・増量優先。上限を上回っているときだけ「残りは回復に」と軽く言う。未実施は全く問題にしない。糖質目標には影響しない）
 - 今週の筋トレ：${weeklyTrain(key)}/2回（週2必須・最優先。0回のまま週末に近い時だけ、責めずに枠の置き場を一緒に考える）
+- 柔術復帰ドリル：本日${day.drill ? "実施" : "—"}／今週${weeklyDrill(key)}回（目標1〜2回・3〜5分。未実施を責めない）
 - 睡眠：${day.sleep != null ? day.sleep + "時間（目標7時間）" : "記録なし"}${(day.bedtime || day.waketime) ? `／就寝${day.bedtime ?? "—"}・起床${day.waketime ?? "—"}（目標2:30就寝・9:30起床。ズレはセットで崩れるので就寝側を主因として見る）` : ""}${day.rhr != null ? `／安静時心拍${day.rhr}bpm（平常より明らかに高い朝は回復不足のサイン）` : ""}${day.mood ? `／本人の体調メモ：「${day.mood}」（数字と体感の対応を一言で拾う）` : ""}
 - 緑黄色野菜：${hasVeg ? "あり" : "なし"}／オメガ3の魚：${hasOmega3 ? "あり" : "なし"}
 - 運動実績：${actLabel(day)}${dayActs(day).filter((a)=>MENU[a]).map((a)=>`／${DAY_LABEL[a]}種目：${(((day.workout||{}).checks)||[]).filter((id)=>MENU[a].some((ex)=>ex.id===id)).length}/${MENU[a].length}`).join("")}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}
@@ -788,6 +831,8 @@ function parseLocalInput(text) {
   // 測定（③ストック）：行頭が測定種目ならローカルで確定（パース失敗でもAIに回さずメモ保存）
   const meas = parseMeasText(text);
   if (meas) return { patch: {}, moves: [], meas: meas.meas || null, measNote: meas.note || null };
+  // 種目実績メモ（②実施ログ）：ブルガリアン等のフリーテキストはworkout.noteへ（パース不要・保存のみ）
+  if (EXERCISE_MEMO_RE.test(text.trim())) return { patch: {}, moves: [], wnote: text.trim() };
   const toks = text.split(/[、,，\s　・\/]+/).filter(Boolean);
   if (!toks.length) return null;
   const patch = {}, moves = [];
@@ -818,6 +863,8 @@ async function submitText() {
     if (local.moves.length) patch.moves = (day.moves || []).concat(local.moves.map((mv) => Object.assign({}, mv, { t: stamp })));
     if (local.meas) patch.meas = Object.assign({}, day.meas || {}, local.meas);
     if (local.measNote) patch.measNote = ((day.measNote ? day.measNote + "\n" : "") + local.measNote);
+    if (local.wnote) patch.workout = Object.assign({}, day.workout || { checks: [] },
+      { note: ((day.workout && day.workout.note) ? day.workout.note + "／" : "") + local.wnote });
     updateDay(key, patch);
     return;
   }
@@ -1110,11 +1157,17 @@ function renderLog() {
       ${ACTS.map((t) =>
         `<button class="dt ${t==="aerobic"?"aero":"active"} ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
-    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${DAY_KIND_LABEL[dayKind(day)]}</b> · 💪 今週の筋トレ <b class="mono" style="color:${weeklyTrain(key) >= 2 ? "var(--green)" : "var(--text)"}">${weeklyTrain(key)}</b>/2 · 有酸素 <b class="mono">${weeklyAerobic(key)}</b>（維持）${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで実績）" : ""}</div>
+    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${DAY_KIND_LABEL[dayKind(day)]}</b> · 💪 今週の筋トレ <b class="mono" style="color:${weeklyTrain(key) >= 2 ? "var(--green)" : "var(--text)"}">${weeklyTrain(key)}</b>/2 · 🚶 Zone2 <b class="mono">${weeklyZone2(key)}</b>/${GOALS.zone2Max}分${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで実績）" : ""}</div>
     ${(() => {
       // §6 金曜時点で今週の筋トレ0回のときだけ、責めないリマインドを一度（毎日は出さない）
       const dow = new Date(key.split("-")[0], key.split("-")[1]-1, key.split("-")[2]).getDay();
       return isToday && dow === 5 && weeklyTrain(key) === 0 ? `<div class="walknote">💪 今週の筋トレがまだです。30分×2枠、どこに入れますか？（土日でも2回入ります）</div>` : "";
+    })()}
+    ${(() => {
+      // v3.2 §3 Zone2が週90分を上回ったら「1回だけ」の通知（禁止はしない。初出日に表示、同週内は再表示しない）
+      const wk = toKey(weekInfo(key).start);
+      return isToday && onceNote("mealog:z2note", wk, weeklyZone2(key) > GOALS.zone2Max)
+        ? `<div class="walknote">🚶 今週のZone2は十分です。残りは回復に。</div>` : "";
     })()}
     ${(() => {
       const rem = PACE.filter((row) => pc[row.key] < row.target).map((row) => `${row.label.split("・")[0]}あと${row.target - pc[row.key]}`);
@@ -1170,7 +1223,7 @@ function renderLog() {
     }).join("")}
     ${menuOpen && dayActs(day).some((a) => MENU[a]) ? `
     <div class="section" style="padding-top:0;padding-bottom:14px;margin-top:-8px">
-      <input class="setinput" data-wnote placeholder="メモ（例：A実施 KBDL24×8×4 ゴブレット24×10）"
+      <input class="setinput" data-wnote placeholder="メモ（例：ブルガリアン24kg 左右10×3 ／ スイング24kg 8×5）"
         value="${esc((day.workout && day.workout.note) || "")}" style="font-size:15px">
     </div>` : ""}
 
@@ -1292,6 +1345,11 @@ function renderLog() {
       <button class="chip" data-movechip="walk:30">30分</button>
       <button class="chip" data-movechip="squat:3">💪 スクワット</button>
     </div>
+    <div class="movechips" style="padding-top:6px">
+      <span class="mclabel">🥋 柔術復帰ドリル</span>
+      <button class="chip ${day.drill ? "on" : ""}" data-drillchip>${day.drill ? "✓ ドリル済" : "ドリル済"}</button>
+      <span class="mclabel mono">今週 ${weeklyDrill(key)}／1〜2</span>
+    </div>
     ${(() => {
       const cfg = bgCfg();
       if (!cfg) return ""; // 係数未登録＝機能非表示（実験期間中のOFFを兼ねる）
@@ -1349,6 +1407,7 @@ function renderLog() {
         <div style="font-size:13px;margin-top:6px">${paceTxt}</div>
         ${mus ? `<div style="font-size:13px;color:var(--muted);margin-top:4px">筋量 <b class="mono" style="color:var(--green)">${mus.v}</b>kg${fat ? ` ・体脂肪 <b class="mono">${fat.v}</b>%` : ""}</div>` : ""}
         ${fat && fat.v > GOALS.fatCeil ? `<div style="font-size:13px;color:var(--ice);margin-top:4px">体脂肪率が${GOALS.fatCeil}%を上回っています。間食の内容を糖質・たんぱく質中心に寄せてみましょう（増量は継続でOK）。</div>` : ""}
+        ${onceNote("mealog:mid64", "mid64", bp.cur >= GOALS.midReview) ? `<div style="font-size:13px;color:var(--green);margin-top:4px">📍 ${GOALS.midReview}kg到達。パフォーマンス再評価のタイミングです（チーム会議へ）。</div>` : ""}
       </div></div>`;
     })()}
 
@@ -1486,7 +1545,9 @@ function renderMeasure() {
         const good = def.better === "down" ? d < 0 : d > 0;
         const dTxt = `${d > 0 ? "+" : ""}${(Math.round(d * 10) / 10)}${def.unit}`;
         // 上向きは必ず肯定。停滞・低下は事実のみ淡々と（責めない）。3回連続低下のみ疲労の可能性に触れる
-        note = good ? `<span style="color:var(--green)">前回比 ${dTxt}。${def.key === "grip" ? "増量が効いています" : def.key === "box" ? "着実に下がっています" : "前進しています"}</span>`
+        // better:"none"（腹囲）は質の指標なので増減を良し悪しにせず事実のみ
+        note = def.better === "none" ? `<span style="color:var(--muted)">前回比 ${dTxt}</span>`
+          : good ? `<span style="color:var(--green)">前回比 ${dTxt}。${def.key === "grip" ? "増量が効いています" : def.key === "box" ? "着実に下がっています" : "前進しています"}</span>`
           : tr.decl >= 3 ? `<span style="color:var(--muted)">前回比 ${dTxt}。疲労が残っていませんか？測定日を練習と離してみましょう</span>`
           : `<span style="color:var(--muted)">前回比 ${dTxt}</span>`;
         note += `<span style="color:var(--muted)">　·　開始時比 ${(() => { const b = tr.last.v - tr.base.v; return `${b > 0 ? "+" : ""}${Math.round(b * 10) / 10}${def.unit}`; })()}</span>`;
@@ -1818,6 +1879,10 @@ function bindEvents() {
     b.addEventListener("click", () => { menuOpen = !menuOpen; render(); }));
   const pt = $("[data-pacetoggle]"); if (pt) pt.addEventListener("click", () => { paceOpen = !paceOpen; render(); });
   const mj = $("[data-measjump]"); if (mj) mj.addEventListener("click", () => { view = "measure"; render(); });
+  const dr = $("[data-drillchip]"); if (dr) dr.addEventListener("click", () => {
+    const key = toKey(cursor);
+    updateDay(key, { drill: !getDay(key).drill });
+  });
   document.querySelectorAll("[data-measfield]").forEach((inp) =>
     inp.addEventListener("change", () => {
       // 測定ビューの構造化入力は常に「今日（論理日）」へ記録
