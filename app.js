@@ -1007,7 +1007,16 @@ function bgMeals(cfg, day) {
   const hourCoef = (h) => h >= 19 ? cfg.hour.night : h >= 15 ? cfg.hour.evening : h >= 11 ? cfg.hour.noon : cfg.hour.morning;
   const sl = day.sleep == null || day.sleep === "" ? cfg.sleep[0]
     : Number(day.sleep) >= 6.5 ? cfg.sleep[0] : Number(day.sleep) >= 5 ? cfg.sleep[1] : cfg.sleep[2];
-  const meals = [...groups.values()].sort((a, b) => a.min - b.min).map((g) => {
+  // 分割入力の統合：先頭から30分以内の記録は同一食事として合算（写真＋ご飯を数分差で登録する運用で、
+  // 白米だけの群がP/C低比率＝糖質単独ペナルティを誤って受けるのを防ぐ。較正も食事イベント単位で行われている）
+  const raw = [...groups.values()].sort((a, b) => a.min - b.min);
+  const clusters = [];
+  for (const g of raw) {
+    const last = clusters[clusters.length - 1];
+    if (last && g.min - last.min <= 30) last.foods.push(...g.foods);
+    else clusters.push({ min: g.min, foods: [...g.foods] });
+  }
+  const meals = clusters.map((g) => {
     const C = g.foods.reduce((a, f) => a + (Number(f.c) || 0), 0);
     const P = g.foods.reduce((a, f) => a + (Number(f.p) || 0), 0);
     const q = g.foods.filter((f) => (Number(f.c) || 0) >= 5);
