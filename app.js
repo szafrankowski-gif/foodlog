@@ -125,19 +125,20 @@ function onceNote(storeKey, scope, active) {
 // v3.2改訂 確定メニュー（外部プラン統合・下半身/片脚系優先・進行はダブルプログレッション）。アプリは記録係：メニュー管理機能は持たない
 const MENU = {
   trainA: [ // 脚＋引く力（週1）
+    { id: "tgu",       name: "TGU（任意・習得枠）",      spec: "軽量（靴 or 5kgDB）左右1・16kgまで育てば正式昇格検討" },
     { id: "wupA",      name: "W-up",                  spec: "足首壁・90/90・自重スプリット・スキャプラ・軽ジャンプ" },
     { id: "boxjump",   name: "ボックスジャンプ",        spec: "41cm 3×3・質重視" },
-    { id: "bulgarian", name: "ブルガリアンスクワット",   spec: "24kg 左右6-10×3" },
-    { id: "pullup",    name: "懸垂",                  spec: "3-6回×2-3S（ドラツー併行中は増やさない）" },
+    { id: "bulgarian", name: "ブルガリアンスクワット",   spec: "16kg 左右6-10×3（余裕→24kg再挑戦→バンド/1.5レップ。フォーム崩れは下げてよい・脚の疲労は維持）" },
+    { id: "pullup",    name: "懸垂",                  spec: "自重3-6×2-3（6×3安定でベルト+5kg〜／疲労日はバンド補助6-8×2。加重後もセット数2-3厳守）" },
     { id: "slrdl",     name: "片脚RDL",               spec: "24kg 左右6-10×3" },
     { id: "kneeroll",  name: "膝コロ",                spec: "6-12×3" },
     { id: "calf",      name: "片脚カーフレイズ（任意）", spec: "左右12-20×2-3" },
   ],
   trainB: [ // 登山脚＋押す・ロウ（週1）
     { id: "wupB",    name: "W-up",                    spec: "キャット&カウ・ヒンジ・16kgスイング5×2・スキャプラPU・ステップアップ" },
-    { id: "swing",   name: "KBスイング",               spec: "24kg 5-8×5・速度が落ちたら終了" },
+    { id: "swing",   name: "KBスイング",               spec: "24kg 5-8×5・速度が落ちたら終了（頭打ち→片手24kg→バンド追加）" },
     { id: "stepup",  name: "ステップアップ",           spec: "左右6-10×3（隔週でステップダウン 左右8-12×2-3）" },
-    { id: "push",    name: "押し種目（隔週交代）",       spec: "足上げプッシュアップ 6-15×3 ⇄ ディップス 限界-1×4" },
+    { id: "push",    name: "ディップス（ナロー・加重）",  spec: "ベルト+5kg 6-8×3 RIR1-2（8×3安定→+8kg→KB16kg吊り。疲労日・出先は足上げPU。ワイドは自重のまま・同日にやらない）" },
     { id: "row",     name: "ワンハンドロウ",           spec: "24kg 左右8-12×3" },
     { id: "march",   name: "スーツケースマーチ",        spec: "24kg 左右30-45秒×3" },
   ],
@@ -400,10 +401,21 @@ const MEAS_DEF = [
     note: "週1。左右差1.5cm超は足首モビリティの左右差サイン" },
   // 懸垂・ディップスは自重系列と加重系列（+kg×回数）を別系列で持つ（Y軸が混ざるため）
   { key: "pullup", label: "懸垂", unit: "回", sides: false, better: "up", target: null, dual: ["自重", "加重"],
-    note: "週1（A日）・ディップスと交代で主指標。加重は「懸垂 +5kg 4回」で別系列に（目標：加重化）" },
-  { key: "dips", label: "ディップス", unit: "回", sides: false, better: "up", target: null, dual: ["自重", "加重"],
-    empty: "未記録（押し種目は隔週交代のため、空き週があっても正常です）",
-    note: "隔週（B日・実施週のみ）。加重は「ディップス +8kg 6回」で別系列に" },
+    note: "週1（A日）。自重6×3安定でベルト+5kg〜（目標：加重化）。加重は「懸垂 +5kg 4回」で別系列に" },
+  { key: "dips", label: "ディップス（ナロー）", unit: "回", sides: false, better: "up", target: null, dual: ["自重", "加重"],
+    note: "週1（B日・主役）。加重は「ディップス +5kg 7回」で別系列に（8×3安定→+8kg→KB16kg）" },
+  { key: "dipsWide", label: "ディップス（ワイド・自重）", unit: "回", sides: false, better: "up", target: null,
+    empty: "任意記録（加重域未満のうちは自重のみ。未記録で正常）",
+    note: "「ディップス ナロー10 ワイド5」で両方記録。ナロー加重と同日にやらない" },
+  { key: "swing1", label: "片手スイング", unit: "回", sides: true, better: "up", target: null,
+    empty: "スイング頭打ち後の漸進枠（未記録で正常）",
+    note: "「片手スイング 24kg 右8 左8」で記録。24kgで左右8回を質を保って完遂→32kg解禁" },
+  { key: "bulgKg", label: "ブルガリアン使用重量", unit: "kg", sides: false, better: "none", target: null,
+    empty: "「ブルガリアン 16kg 左8 右8」で記録（重量の変更履歴として残ります）",
+    note: "開始16kg。16kg×10×3が余裕→24kg再挑戦。負荷を下げるのも正しい調整" },
+  { key: "tguKg", label: "TGU使用重量（任意）", unit: "kg", sides: false, better: "none", target: null,
+    empty: "任意・習得枠（未記録で正常）。「TGU 5kg 左右1」で記録",
+    note: "2-3ヶ月で16kgまで育ったら正式種目昇格を検討" },
   { key: "hang", label: "デッドハング", unit: "秒", sides: false, better: "up", target: null,
     note: "週1。グリップ持久の指標" },
   { key: "swing", label: "KBスイング連続", unit: "回", sides: false, better: "up", target: null,
@@ -419,21 +431,47 @@ const MEAS_DEF = [
 // 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
 // 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース失敗はmeasNoteに保存し測定ビューで分類可能に
 // 種目実績のフリーテキストメモ（例：「ブルガリアン 24kg 左10 右10」）→ 実施ログ（workout.note）へ
-const EXERCISE_MEMO_RE = /^(ブルガリアン|片脚RDL|膝コロ|ステップアップ|ステップダウン|ワンハンドロウ|(?:スーツケース)?(?:マーチ|ホールド)|足上げプッシュアップ|プッシュアップ)/;
+const EXERCISE_MEMO_RE = /^(ブルガリアン|TGU|ＴＧＵ|片脚RDL|膝コロ|ステップアップ|ステップダウン|ワンハンドロウ|(?:スーツケース)?(?:マーチ|ホールド)|足上げプッシュアップ|プッシュアップ)/;
 function parseMeasText(text) {
   const t = text.trim();
-  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|懸垂|ディップス|(?:KB)?スイング|(?:ボックス)?ジャンプ|腹囲)/.exec(t);
+  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|懸垂|ディップス|片手スイング|(?:KB)?スイング|(?:ボックス)?ジャンプ|腹囲|ブルガリアン|TGU|ＴＧＵ)/.exec(t);
   if (!head) return null;
-  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips", "懸垂": "pullup", "腹囲": "waist" }[head[1]]
-    || (head[1].startsWith("ピストル") ? "box" : head[1].endsWith("スイング") ? "swing" : head[1].endsWith("ジャンプ") ? "jump" : "hang");
+  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips", "懸垂": "pullup", "腹囲": "waist", "片手スイング": "swing1", "ブルガリアン": "bulg" }[head[1]]
+    || (head[1].startsWith("ピストル") ? "box" : head[1].endsWith("スイング") ? "swing" : head[1].endsWith("ジャンプ") ? "jump" : /TGU|ＴＧＵ/.test(head[1]) ? "tgu" : "hang");
   const r = /右[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t), l = /左[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t);
   const nums = (t.slice(head[1].length).match(/\d{1,3}(?:\.\d+)?/g) || []).map(Number);
   const meas = {};
-  if (key === "dips" || key === "pullup") {
-    // 「懸垂 5回」「ディップス 9回」＝自重／「懸垂 +5kg 4回」＝加重（別系列）
+  if (key === "bulg" || key === "tgu") {
+    // 使用重量の変更履歴（測定ビューの時系列）＋全文を実施ログへ。kgが無ければ純粋なメモとして扱う
+    const kg = /(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.exec(t);
+    if (!kg) return null; // → EXERCISE_MEMO_REがworkout.noteに保存
+    meas[key + "Kg"] = Number(kg[1]);
+    return { meas, wnote: t };
+  } else if (key === "swing1") {
+    // 「片手スイング 24kg 右8 左8」→ 重量＋左右回数（24kg左右8回で32kg解禁条件）
+    const kg = /(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.exec(t);
+    if (kg) meas.swing1Kg = Number(kg[1]);
+    if (r) meas.swing1R = Number(r[1]);
+    if (l) meas.swing1L = Number(l[1]);
+    if (!r && !l) {
+      const reps = (t.replace(/(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/, "").match(/\d{1,3}/g) || []).map(Number);
+      if (reps.length >= 2) { meas.swing1R = reps[0]; meas.swing1L = reps[1]; }
+      else if (reps.length === 1) { meas.swing1R = reps[0]; meas.swing1L = reps[0]; }
+    }
+    if (Object.keys(meas).length === 0) return { note: t };
+  } else if (key === "dips") {
+    // 「ディップス ナロー10 ワイド5」＝自重2系列／「ディップス +5kg 7回」＝ナロー加重／「ディップス 9回」＝ナロー自重
     const w = /[+＋][\s　]*(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)[\s　]*(\d{1,3})[\s　]*回?/.exec(t);
-    if (w) { meas[key + "Wkg"] = Number(w[1]); meas[key + "W"] = Number(w[2]); }
-    else if (nums.length) meas[key] = nums[0];
+    const nar = /ナロー[\s　]*(\d{1,3})/.exec(t), wide = /ワイド[\s　]*(\d{1,3})/.exec(t);
+    if (w) { meas.dipsWkg = Number(w[1]); meas.dipsW = Number(w[2]); }
+    else if (nar || wide) { if (nar) meas.dips = Number(nar[1]); if (wide) meas.dipsWide = Number(wide[1]); }
+    else if (nums.length) meas.dips = nums[0];
+    else return { note: t };
+  } else if (key === "pullup") {
+    // 「懸垂 5回」＝自重／「懸垂 +5kg 4回」＝加重（別系列）
+    const w = /[+＋][\s　]*(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)[\s　]*(\d{1,3})[\s　]*回?/.exec(t);
+    if (w) { meas.pullupWkg = Number(w[1]); meas.pullupW = Number(w[2]); }
+    else if (nums.length) meas.pullup = nums[0];
     else return { note: t };
   } else if (key === "swing" || key === "jump" || key === "waist") {
     if (!nums.length) return { note: t };
@@ -619,6 +657,8 @@ async function fetchBakao(key) {
 目標：たんぱく質は基準${FLOOR}g（毎日必達）、筋トレ日・高強度日は${CEILING}gを目標にする（上限ではなく、超えても全く問題ない）。糖質は下限管理：休養日${GOALS.carbFloorRest}g・筋トレ/高強度日${GOALS.carbFloorTrain}gを下回らないことが目標で、上限は設けない（血糖対策は玄米優先・食後散歩・ドカ食い回避という質とタイミングで行い、総量は絞らない）。P残・C下限残があるときは、具体的な食品での埋め方をひとつ示す（例：おにぎり1個で糖質+40g、プロテイン1杯でP+20g）。
 
 筋トレ設計：週2必須・最優先。自宅装備（KB16/24kg・プライオボックス・懸垂バー・ディップススタンド等）でA（脚＋引き）/B（登山脚＋押し・ロウ）の週2。片脚系・下半身優先（柔術・山・ドラツーの3ゴールとも下半身が律速）。加えてドライツーリング週1＋柔術復帰ドリル週1-2。懸垂は少なめの設定（2-3セット）が正しい状態で、増やすことを促さない（プルはドラツーが担う）。KBスイングはフォーム優先。「速度が落ちたら終了」を支持し回数増を煽らない。Zone2有酸素は週${GOALS.zone2Max}分上限（増量優先）。上限を上回っているときは回復を推す。グリップは強化対象（目標${GOALS.grip}kg）。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレA翌日は殿筋・ハム、B翌日は胸・肩・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・懸垂・ディップス・ハング・膝壁・腹囲）の向上は増量の進捗として肯定的に扱う。ただし腹囲が体重より明らかに速く増える傾向が続く場合のみ、体脂肪率の確認を軽く促す（減量提案はしない）。本人の記述に中止サイン（鼠径部の痛み・肘内側の一点痛・腰からのしびれ等）があれば、その種目の中止・変更と、続く場合の医療機関相談を勧める。体重が${GOALS.midReview}kgに到達している場合、中間評価（パフォーマンス再評価）のタイミングであることに一度だけ軽く触れてよい（毎回繰り返さない）。翌朝の手首に違和感が出たら一段戻すルール。
+
+実施調整の前提（v3.3）：ブルガリアンスクワットは16kgに調整済みで、これは正しい調整（「後退」と表現しない）。「フォームが崩れたら下げる／脚の疲労だけなら維持」の判断基準を支持する。ディップスはナロー加重が主役で、加重の進捗（+5→+8→KB16kg吊り）は増量の成果として肯定する。上半身は想定より強く、下半身が伸びしろ——という非対称プロフィールを前提に話す。TGUは任意の習得枠（実施記録があれば軽く肯定、未実施でも触れない）。装備の購入は完了済み（KB16/24kg・プライオボックス・ディップスベルト・バンド4本等）で、追加購入の相談には原則「不要」と答える。唯一の例外：片手スイング24kgで左右8回×5セットを質を保って完遂したら、32kg KBの購入条件達成として一度だけ案内してよい。ドラツー当日または翌日は、最弱バンドでの肩外旋・前腕伸筋ケア5分を軽く勧めてよい。
 
 日区分の判定は「実績ベース」：筋トレのチェックがあれば筋トレ日、登攀・柔術・山行の実績があれば高強度日（目標は筋トレ日と同じ）、どちらもなければ休養日。宣言でなく実績で決まる。就寝2:30の目標は増量の一部（睡眠中の成長ホルモン＝筋合成）として扱い、遅れた日は責めずに就寝側だけ軽く指摘してよい。
 
@@ -832,7 +872,7 @@ function fileHHMM(file, key) {
 function parseLocalInput(text) {
   // 測定（③ストック）：行頭が測定種目ならローカルで確定（パース失敗でもAIに回さずメモ保存）
   const meas = parseMeasText(text);
-  if (meas) return { patch: {}, moves: [], meas: meas.meas || null, measNote: meas.note || null };
+  if (meas) return { patch: {}, moves: [], meas: meas.meas || null, measNote: meas.note || null, wnote: meas.wnote || null };
   // 種目実績メモ（②実施ログ）：ブルガリアン等のフリーテキストはworkout.noteへ（パース不要・保存のみ）
   if (EXERCISE_MEMO_RE.test(text.trim())) return { patch: {}, moves: [], wnote: text.trim() };
   const toks = text.split(/[、,，\s　・\/]+/).filter(Boolean);
@@ -1424,6 +1464,11 @@ function renderLog() {
         ${fat && fat.v > GOALS.fatCeil ? `<div style="font-size:13px;color:var(--ice);margin-top:4px">体脂肪率が${GOALS.fatCeil}%を上回っています。間食の内容を糖質・たんぱく質中心に寄せてみましょう（増量は継続でOK）。</div>` : ""}
         ${onceNote("mealog:mid64", "mid64", bp.cur >= GOALS.midReview) ? `<div style="font-size:13px;color:var(--green);margin-top:4px">📍 ${GOALS.midReview}kg到達。パフォーマンス再評価のタイミングです（チーム会議へ）。</div>` : ""}
       </div></div>`;
+    })()}
+    ${(() => {
+      // v3.3 §4：片手スイング24kg×左右8回の記録で32kg KBの購入条件達成を一度だけ案内
+      const hit = Object.values(data).some((dd) => dd && dd.meas && Number(dd.meas.swing1Kg) >= 24 && Number(dd.meas.swing1R) >= 8 && Number(dd.meas.swing1L) >= 8);
+      return onceNote("mealog:kb32", "kb32", hit) ? `<div class="walknote">🏋️ 片手スイング24kg×8回の記録を確認。32kg KBの購入条件を満たしました（16kgはW-up・疲労日用で現役維持）。</div>` : "";
     })()}
 
     <div class="section" style="padding-bottom:8px">
