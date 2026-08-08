@@ -573,8 +573,9 @@ async function callApi(body) {
     },
     body: JSON.stringify(body),
   });
-  const json = await res.json();
-  if (json.error) throw new Error(json.error.message || "API error");
+  let json;
+  try { json = await res.json(); } catch (e) { throw new Error(`HTTP ${res.status}（応答を解釈できません）`); }
+  if (json.error) throw new Error(`HTTP ${res.status}：${json.error.message || json.error.type || "APIエラー"}`);
   return json.content.filter((b) => b.type === "text").map((b) => b.text).join("");
 }
 
@@ -922,7 +923,7 @@ async function submitText() {
       updateDay(key, { foods: day.foods.concat(stampFoods(items, key)), comment: null });
     }
   } catch (e) {
-    errMsg = e.message === "NO_KEY" ? "設定タブでAPIキーを登録してください。" : "概算に失敗しました。通信とAPIキーを確認してください。";
+    errMsg = e.message === "NO_KEY" ? "設定タブでAPIキーを登録してください。" : `概算に失敗しました：${(e && e.message) || "通信とAPIキーを確認してください"}`;
   } finally { busy = false; render(); }
 }
 
@@ -940,7 +941,7 @@ async function onPhotoPicked(file) {
       inputText = "";
       updateDay(key, { foods: day.foods.concat(stampFoods(items, key, await photoHHMM(file, key))), comment: null });
     }
-  } catch (e) { errMsg = "写真の解析に失敗しました。もう一度試してください。"; }
+  } catch (e) { errMsg = `写真の解析に失敗しました：${(e && e.message) || "もう一度試してください"}`; }
   finally { busy = false; render(); }
 }
 
@@ -952,7 +953,7 @@ async function getBakao() {
   try {
     const c = await fetchBakao(key);
     if (c) updateDay(key, { comment: c });
-  } catch (e) { errMsg = "評価の取得に失敗しました。"; }
+  } catch (e) { errMsg = `評価の取得に失敗しました：${e && e.message === "NO_KEY" ? "APIキー未登録" : (e && e.message) || "不明なエラー（通信環境を確認してください）"}`; }
   finally { commentBusy = false; render(); }
 }
 
@@ -982,7 +983,7 @@ async function onInbodyPicked(file) {
       }
       updateDay(key, patch);
     }
-  } catch (e) { errMsg = "読み取りに失敗しました。もう一度試してください。"; }
+  } catch (e) { errMsg = `読み取りに失敗しました：${(e && e.message) || "もう一度試してください"}`; }
   finally { busy = false; render(); }
 }
 
