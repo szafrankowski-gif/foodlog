@@ -1,4 +1,4 @@
-/* foodlog v3.1 — 食事・トレーニングログPWA（増量フェーズ：糖質下限管理・身体能力ストック）｜更新: 2026-07-26 */
+/* foodlog v4.1 — 食事・トレーニングログPWA（増量フェーズ：挙上タップ記録・糖質下限管理・身体能力ストック）｜更新: 2026-09-10 */
 "use strict";
 
 // v3.1 増量フェーズの目標値（一元管理。値の変更はここだけ／機能側にハードコードしない）
@@ -212,6 +212,7 @@ let busy = false, commentBusy = false;
 let errMsg = "", setMsg = "";
 let inputText = "";
 let menuOpen = false, paceOpen = false, gaugeOpen = false, bgOpen = false; // 折りたたみ状態（メモリのみ・リロードで閉じる）
+let liftEx = null, liftLoad = null, liftReps = null, liftSets = null; // v4.1 挙上タップ入力の選択状態（メモリのみ）
 
 // ---------- ユーティリティ ----------
 const $ = (sel) => document.querySelector(sel);
@@ -431,7 +432,7 @@ const MEAS_DEF = [
 // 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
 // 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース失敗はmeasNoteに保存し測定ビューで分類可能に
 // 種目実績のフリーテキストメモ（例：「ブルガリアン 24kg 左10 右10」）→ 実施ログ（workout.note）へ
-const EXERCISE_MEMO_RE = /^(ブルガリアン|TGU|ＴＧＵ|片脚RDL|膝コロ|ステップアップ|ステップダウン|ワンハンドロウ|(?:スーツケース)?(?:マーチ|ホールド)|足上げプッシュアップ|プッシュアップ)/;
+const EXERCISE_MEMO_RE = /^(ブルガリアン|TGU|ＴＧＵ|(?:片脚)?RDL|膝コロ|ステップアップ|ステップダウン|ワンハンドロウ|(?:スーツケース)?(?:マーチ|ホールド)|足上げプッシュアップ|プッシュアップ)/;
 function parseMeasText(text) {
   const t = text.trim();
   const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|懸垂|ディップス|片手スイング|(?:KB)?スイング|(?:ボックス)?ジャンプ|腹囲|ブルガリアン|TGU|ＴＧＵ)/.exec(t);
@@ -473,7 +474,12 @@ function parseMeasText(text) {
     if (w) { meas.pullupWkg = Number(w[1]); meas.pullupW = Number(w[2]); }
     else if (nums.length) meas.pullup = nums[0];
     else return { note: t };
-  } else if (key === "swing" || key === "jump" || key === "waist") {
+  } else if (key === "swing") {
+    // v4.1：重量つき（「スイング 24kg 8×5」）はセット実施の挙上メモ→実施ログへ（連続回数測定と混同しない）
+    if (/(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.test(t)) return { wnote: t };
+    if (!nums.length) return { note: t };
+    meas.swing = nums[0];
+  } else if (key === "jump" || key === "waist") {
     if (!nums.length) return { note: t };
     meas[key] = nums[0];
   } else if (key === "hang") {
@@ -514,6 +520,108 @@ function measThisWeek(anchorKey) {
     if (m.hang != null) done.hang = true;
   }
   return done;
+}
+
+// ---------- 挙上記録（v4.1：タップ4回で1種目。②実施ログの構造化） ----------
+// day.lifts = [{ex, load, reps, sets, t}]。loadは文字列（"自重"/"KB16"/"+5"…）で数値換算はビュー側
+const LIFT_EX_KEY = "mealog:liftex"; // ユーザー追加種目（端末ローカル。データ本体はGist同期されるがマスタ追加分は端末ごと）
+const LIFT_LOADS_ALL = ["自重", "KB16", "KB24", "+5", "+8", "+12", "+16", "+20"];
+const LIFT_DEF = [
+  { id: "bulgarian", label: "ブルガリアン", loads: ["自重", "KB16", "KB24"] },
+  { id: "dips",      label: "ディップス",   loads: ["自重", "+5", "+8", "+12", "+16", "+20"] },
+  { id: "swing",     label: "スイング",     loads: ["KB16", "KB24"] }, // 片手は種目追加で
+  { id: "rdl",       label: "RDL(片脚)",    loads: ["KB16", "KB24"] },
+  { id: "pullup",    label: "懸垂",         loads: ["自重", "+5", "+8", "+12", "+16", "+20"] },
+];
+function liftCustom() {
+  try { const a = JSON.parse(localStorage.getItem(LIFT_EX_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+const liftMaster = () => LIFT_DEF.concat(liftCustom());
+function liftLabel(ex) { const e = liftMaster().find((x) => x.id === ex); return e ? e.label : ex; }
+// 重量の序列：自重=0、"+N"/"KBN"はN。比較不能はNaN（判定は同値扱いのみ）
+function loadRank(load) {
+  const s = String(load ?? "").trim();
+  if (!s) return NaN;
+  if (s === "自重") return 0;
+  const m = /(\d{1,3}(?:\.\d+)?)/.exec(s);
+  return m ? Number(m[1]) : NaN;
+}
+const fmtLoad = (l) => { const s = String(l ?? ""); return /^[+＋]\d/.test(s) ? s + "kg" : s; };
+const liftRepsSets = (r) => r.sets != null ? `${r.reps}×${r.sets}` : `${r.reps}回`;
+// 同種目の直前レコード（beforeKey/beforeIdxを渡すとその記録より前だけを見る。省略で全期間の最新＝プリセット用）
+function liftPrev(ex, beforeKey, beforeIdx) {
+  let prev = null;
+  for (const k of Object.keys(data).sort()) {
+    if (beforeKey && k > beforeKey) break;
+    const ls = (data[k] && data[k].lifts) || [];
+    for (let i = 0; i < ls.length; i++) {
+      if (beforeKey && k === beforeKey && beforeIdx != null && i >= beforeIdx) break;
+      if (ls[i] && ls[i].ex === ex) prev = ls[i];
+    }
+  }
+  return prev;
+}
+// 前進判定：重量↑ or 同重量で回数↑ or 同重量同回数でセット↑ → up。全て同値 → keep。下回るときはnull＝何も言わない
+function judgeLift(rec, prev) {
+  if (!prev) return null;
+  const lr = loadRank(rec.load), lp = loadRank(prev.load);
+  const prevTxt = ((isNaN(lr) || isNaN(lp) || lr !== lp) ? `${fmtLoad(prev.load)} ` : "") + liftRepsSets(prev);
+  const rr = Number(rec.reps) || 0, pr = Number(prev.reps) || 0;
+  const rs = rec.sets == null ? 1 : Number(rec.sets), ps = prev.sets == null ? 1 : Number(prev.sets);
+  if (!isNaN(lr) && !isNaN(lp)) {
+    if (lr > lp) return { up: true, prevTxt };
+    if (lr === lp && rr > pr) return { up: true, prevTxt };
+    if (lr === lp && rr === pr && rs > ps) return { up: true, prevTxt };
+  }
+  if (String(rec.load) === String(prev.load) && rr === pr && rs === ps) return { keep: true, prevTxt };
+  return null;
+}
+// §4 派生データ：種目ごとのベスト（重量→回数→セットの順で比較。表示改修はv4.0本体で行うため現時点は算出のみ）
+function liftsBest() {
+  const best = {};
+  for (const k of Object.keys(data).sort()) {
+    for (const r of (data[k] && data[k].lifts) || []) {
+      const b = best[r.ex];
+      if (!b) { best[r.ex] = r; continue; }
+      const j = judgeLift(r, b);
+      if (j && j.up) best[r.ex] = r;
+    }
+  }
+  return best;
+}
+// §4 測定系列との橋渡し（懸垂・ディップスは二重入力を要求しない。ブルガリアンは使用重量履歴に反映）
+function liftMeasPatch(rec) {
+  const kg = loadRank(rec.load);
+  const m = {};
+  if (rec.ex === "pullup") { if (kg > 0) { m.pullupWkg = kg; m.pullupW = Number(rec.reps); } else if (kg === 0) m.pullup = Number(rec.reps); }
+  else if (rec.ex === "dips") { if (kg > 0) { m.dipsWkg = kg; m.dipsW = Number(rec.reps); } else if (kg === 0) m.dips = Number(rec.reps); }
+  else if (rec.ex === "bulgarian" && /^KB/i.test(String(rec.load))) m.bulgKg = kg;
+  return Object.keys(m).length ? m : null;
+}
+// §3-1 フリーテキスト由来の挙上メモをパース成功時だけ同形式に正規化（失敗しても従来の保存はそのまま）
+const LIFT_TEXT_RE = /^(ブルガリアン|ディップス|懸垂|(?:片脚)?RDL|(?:KB)?スイング)/;
+function parseLiftText(text) {
+  const t = text.trim();
+  const m = LIFT_TEXT_RE.exec(t);
+  if (!m) return null;
+  const ex = /ブルガリアン/.test(m[1]) ? "bulgarian" : /ディップス/.test(m[1]) ? "dips" : /懸垂/.test(m[1]) ? "pullup" : /RDL/.test(m[1]) ? "rdl" : "swing";
+  const plus = /[+＋][\s　]*(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.exec(t);
+  const kg = plus ? null : /(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.exec(t);
+  const load = plus ? "+" + Number(plus[1])
+    : kg ? ((ex === "dips" || ex === "pullup") ? "+" + Number(kg[1]) : "KB" + Number(kg[1]))
+    : ((ex === "dips" || ex === "pullup" || ex === "bulgarian") ? "自重" : null);
+  if (!load) return null; // スイング・RDLは重量表記が無ければ挙上レコード化しない（連続回数測定・メモは従来経路で保存済み）
+  let reps = null, sets = null;
+  const xs = /(\d{1,3})[\s　]*[×xX][\s　]*(\d{1,2})/.exec(t.replace(plus ? plus[0] : (kg ? kg[0] : ""), ""));
+  const r = /右[\s　]*(\d{1,3})/.exec(t), l = /左[\s　]*(\d{1,3})/.exec(t);
+  if (xs) { reps = Number(xs[1]); sets = Number(xs[2]); }
+  else if (r || l) reps = Math.min(...[r, l].filter(Boolean).map((v) => Number(v[1]))); // 左右差があれば小さい方を採用
+  else {
+    const rr = /(\d{1,3})[\s　]*回/.exec(t) || /ナロー[\s　]*(\d{1,3})/.exec(t);
+    if (rr) reps = Number(rr[1]);
+  }
+  if (reps == null) return null;
+  return { ex, load, reps, sets };
 }
 
 // ---------- 増量ペース（§5：7日移動平均の30日前比） ----------
@@ -673,8 +781,9 @@ async function fetchBakao(key) {
 - 柔術復帰ドリル：本日${day.drill ? "実施" : "—"}／今週${weeklyDrill(key)}回（目標1〜2回・3〜5分。未実施を責めない）
 - 睡眠：${day.sleep != null ? day.sleep + "時間（目標7時間）" : "記録なし"}${(day.bedtime || day.waketime) ? `／就寝${day.bedtime ?? "—"}・起床${day.waketime ?? "—"}（目標2:30就寝・9:30起床。ズレはセットで崩れるので就寝側を主因として見る）` : ""}${day.rhr != null ? `／安静時心拍${day.rhr}bpm（平常より明らかに高い朝は回復不足のサイン）` : ""}${day.mood ? `／本人の体調メモ：「${day.mood}」（数字と体感の対応を一言で拾う）` : ""}
 - 緑黄色野菜：${hasVeg ? "あり" : "なし"}／オメガ3の魚：${hasOmega3 ? "あり" : "なし"}
-- 運動実績：${actLabel(day)}${dayActs(day).filter((a)=>MENU[a]).map((a)=>`／${DAY_LABEL[a]}種目：${(((day.workout||{}).checks)||[]).filter((id)=>MENU[a].some((ex)=>ex.id===id)).length}/${MENU[a].length}`).join("")}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}
-${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${fmt1(day.weight) || "—"}kg／骨格筋量${day.muscle ?? "—"}kg／体脂肪率${day.fatpct ?? "—"}%（増量フェーズ：+${GOALS.weightRateMin}〜${GOALS.weightRateMax}kg/月なら順調。骨格筋量の増加を最重視。体脂肪率${GOALS.fatCeil}%超のときだけ間食の質に一言、減量提案はしない）
+- 運動実績：${actLabel(day)}${dayActs(day).filter((a)=>MENU[a]).map((a)=>`／${DAY_LABEL[a]}種目：${(((day.workout||{}).checks)||[]).filter((id)=>MENU[a].some((ex)=>ex.id===id)).length}/${MENU[a].length}`).join("")}${(day.workout&&day.workout.note)?`（メモ：${day.workout.note}）`:""}（種目チェックのみで挙上の個別記録がない日も正常。記録を催促しない）
+${(day.lifts && day.lifts.length) ? `- 本日の挙上記録：${day.lifts.map((r, i) => { const j = judgeLift(r, liftPrev(r.ex, key, i)); return `${liftLabel(r.ex)} ${fmtLoad(r.load)} ${liftRepsSets(r)}${j && j.up ? `（前回${j.prevTxt}から前進）` : j && j.keep ? "（前回と同じ・維持）" : ""}`; }).join("、")}（「前進」の種目があれば一言肯定してよい。前回に届かない種目には触れない・ネガティブな言及をしない）
+` : ""}${(day.muscle != null || day.fatpct != null) ? `- 体組成：体重${fmt1(day.weight) || "—"}kg／骨格筋量${day.muscle ?? "—"}kg／体脂肪率${day.fatpct ?? "—"}%（増量フェーズ：+${GOALS.weightRateMin}〜${GOALS.weightRateMax}kg/月なら順調。骨格筋量の増加を最重視。体脂肪率${GOALS.fatCeil}%超のときだけ間食の質に一言、減量提案はしない）
 ` : ""}${day.meas ? `- 本日の身体能力測定：${MEAS_DEF.filter((d) => d.sides ? (day.meas[d.key + "R"] != null || day.meas[d.key + "L"] != null) : day.meas[d.key] != null).map((d) => `${d.label} ${d.sides ? `右${day.meas[d.key + "R"] ?? "—"}/左${day.meas[d.key + "L"] ?? "—"}` : day.meas[d.key]}${d.unit}`).join("、")}（向上していれば肯定的に。低下は責めない）
 ` : ""}${day.wrist ? `- 翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}
 ` : ""}- 食べたもの（時刻付き。血糖対策は総量でなく質とタイミング：時刻の偏り＝1食への糖質集中や、就寝2:30直前の重い食事があれば軽く触れてよい。時刻なしの品目は詮索しない）：${foodList}
@@ -908,6 +1017,9 @@ async function submitText() {
     if (local.measNote) patch.measNote = ((day.measNote ? day.measNote + "\n" : "") + local.measNote);
     if (local.wnote) patch.workout = Object.assign({}, day.workout || { checks: [] },
       { note: ((day.workout && day.workout.note) ? day.workout.note + "／" : "") + local.wnote });
+    // v4.1 §3-1：挙上として読めるテキストは day.lifts にも正規化して同居させる（測定・メモの保存はそのまま）
+    const lift = parseLiftText(t);
+    if (lift) patch.lifts = (day.lifts || []).concat([Object.assign({}, lift, { t: stamp })]);
     updateDay(key, patch);
     return;
   }
@@ -1335,6 +1447,54 @@ function renderLog() {
       <div class="hbar" style="margin-top:8px;height:6px"><div class="fill" style="width:${pct}%;background:var(--green)"></div></div>
     </div>`;
       return gaugeBig ? gauge + carbCard(false) : carbCard(true) + gauge;
+    })()}
+    ${(() => {
+      // v4.1 今日の挙上：タップ4回で1種目（種目→重さ→回数→記録）。種目選択で前回値プリセット＝前回と同じなら2タップ。
+      // フリーテキスト（下部バー）は例外用として維持。誤記録は行の長押しで削除
+      const master = liftMaster();
+      const lifts = day.lifts || [];
+      const exDef = liftEx ? master.find((e) => e.id === liftEx) : null;
+      const rows = lifts.map((r, i) => {
+        const j = judgeLift(r, liftPrev(r.ex, key, i));
+        const jTxt = j && j.up ? `<span style="font-size:13px;color:var(--green);flex-shrink:0">🎉前回${esc(j.prevTxt)}から前進</span>`
+          : j && j.keep ? `<span style="font-size:13px;color:var(--muted);flex-shrink:0">前回と同じ（維持）</span>` : "";
+        return `<div data-liftrow="${i}" title="長押しで削除" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;user-select:none;-webkit-user-select:none;cursor:pointer">
+          <span class="mono" style="font-size:13px;color:var(--muted);flex-shrink:0">${r.t ? esc(r.t) : "--:--"}</span>
+          <span style="font-size:15px;min-width:0">${esc(liftLabel(r.ex))} <b class="mono">${esc(fmtLoad(r.load))} ${esc(liftRepsSets(r))}</b></span>
+          ${jTxt}
+        </div>`;
+      }).join("");
+      const loads = exDef ? (exDef.loads || LIFT_LOADS_ALL).slice() : [];
+      if (exDef && liftLoad != null && !loads.includes(liftLoad)) loads.push(liftLoad);
+      const repsList = [...new Set([3, 5, 6, 8, 10, 12].concat(liftReps != null ? [Number(liftReps)] : []))].sort((a, b) => a - b);
+      const setsList = [...new Set([2, 3, 5].concat(liftSets != null ? [Number(liftSets)] : []))].sort((a, b) => a - b);
+      return `
+    <div class="section" style="padding-top:10px;padding-bottom:0">
+      <div class="card" style="padding:10px 14px 12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span style="font-size:14px;color:var(--muted)">🏋️ 今日の挙上 — タップで記録</span>
+          <button class="btn-s" data-lifttext style="height:26px;padding:0 6px;border:none">テキスト入力 ›</button>
+        </div>
+        ${rows ? `<div style="margin-top:4px">${rows}</div>` : ""}
+        <div class="movechips" style="padding:8px 0 0">
+          <span class="mclabel">種目</span>
+          ${master.map((e) => `<button class="chip ${liftEx === e.id ? "on" : ""}" data-liftex="${esc(e.id)}">${esc(e.label)}</button>`).join("")}
+          <button class="chip" data-liftadd>＋…</button>
+        </div>
+        ${exDef ? `
+        <div class="movechips" style="padding:6px 0 0">
+          <span class="mclabel">重さ</span>
+          ${loads.map((l) => `<button class="chip ${liftLoad === l ? "on" : ""}" data-liftload="${esc(l)}">${esc(fmtLoad(l))}</button>`).join("")}
+        </div>
+        <div class="movechips" style="padding:6px 0 0">
+          <span class="mclabel">回数</span>
+          ${repsList.map((n) => `<button class="chip ${Number(liftReps) === n ? "on" : ""}" data-liftreps="${n}">${n}</button>`).join("")}
+          <span class="mclabel">×セット</span>
+          ${setsList.map((n) => `<button class="chip ${Number(liftSets) === n ? "on" : ""}" data-liftsets="${n}">${n}</button>`).join("")}
+          <button class="btn-s" data-liftsave style="margin-left:auto">記録</button>
+        </div>` : ""}
+      </div>
+    </div>`;
     })()}
     ${(day.steps != null && day.steps >= STEP_NOTE_MIN && !active) ? `
     <div class="walknote">👣 歩数 ${day.steps.toLocaleString()}歩（参考）。休養日ですが活動量が多い日です。糖質＋40〜50gを目安に補給してOK（目標値は変わりません）。</div>` : ""}
@@ -2097,6 +2257,73 @@ function bindEvents() {
       const cur = getDay(key).wrist;
       updateDay(key, { wrist: cur === b.dataset.wrist ? null : b.dataset.wrist });
     }));
+
+  // v4.1 挙上タップ入力：種目選択で前回値をプリセット（前回と同じなら種目→記録の2タップで完了）
+  document.querySelectorAll("[data-liftex]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const id = b.dataset.liftex;
+      if (liftEx === id) { liftEx = null; render(); return; } // 同じ種目を再タップで閉じる
+      liftEx = id;
+      const prev = liftPrev(id, null, null);
+      const def = liftMaster().find((e) => e.id === id) || {};
+      liftLoad = prev ? prev.load : ((def.loads && def.loads[0]) || "自重");
+      liftReps = prev ? Number(prev.reps) : 5;
+      liftSets = prev ? (prev.sets == null ? 3 : Number(prev.sets)) : 3;
+      render();
+    }));
+  document.querySelectorAll("[data-liftload]").forEach((b) =>
+    b.addEventListener("click", () => { liftLoad = b.dataset.liftload; render(); }));
+  document.querySelectorAll("[data-liftreps]").forEach((b) =>
+    b.addEventListener("click", () => { liftReps = Number(b.dataset.liftreps); render(); }));
+  document.querySelectorAll("[data-liftsets]").forEach((b) =>
+    b.addEventListener("click", () => { liftSets = Number(b.dataset.liftsets); render(); }));
+  const la = $("[data-liftadd]"); if (la) la.addEventListener("click", () => {
+    const name = prompt("追加する種目名（例：片手スイング）");
+    if (!name || !name.trim()) return;
+    const label = name.trim();
+    const id = "x" + Date.now().toString(36);
+    try { localStorage.setItem(LIFT_EX_KEY, JSON.stringify(liftCustom().concat({ id, label, loads: LIFT_LOADS_ALL }))); } catch (e) {}
+    liftEx = id; liftLoad = "自重"; liftReps = 5; liftSets = 3;
+    render();
+  });
+  const ls = $("[data-liftsave]"); if (ls) ls.addEventListener("click", () => {
+    if (!liftEx || liftLoad == null || liftReps == null || liftSets == null) return;
+    const key = toKey(cursor);
+    const day = getDay(key);
+    // 時刻は今日なら現在時刻、過去日はnull（原則8：時刻を捏造しない）
+    const stamp = toKey(logicalToday()) === key ? new Date().toTimeString().slice(0, 5) : null;
+    const rec = { ex: liftEx, load: liftLoad, reps: Number(liftReps), sets: Number(liftSets), t: stamp };
+    const patch = { lifts: (day.lifts || []).concat([rec]) };
+    const mp = liftMeasPatch(rec); // §4：懸垂・ディップスは測定系列にも反映（二重入力を要求しない）
+    if (mp) patch.meas = Object.assign({}, day.meas || {}, mp);
+    liftEx = liftLoad = liftReps = liftSets = null;
+    updateDay(key, patch);
+  });
+  const lt = $("[data-lifttext]"); if (lt) lt.addEventListener("click", () => {
+    const ta = $(".mealinput");
+    if (ta) { ta.focus(); ta.scrollIntoView({ block: "end" }); }
+  });
+  document.querySelectorAll("[data-liftrow]").forEach((row) => {
+    let timer = null;
+    const start = () => {
+      timer = setTimeout(() => {
+        timer = null;
+        const i = Number(row.dataset.liftrow);
+        const key = toKey(cursor);
+        const day = getDay(key);
+        const r = (day.lifts || [])[i];
+        if (!r) return;
+        if (confirm(`「${liftLabel(r.ex)} ${fmtLoad(r.load)} ${liftRepsSets(r)}」を削除しますか？`))
+          updateDay(key, { lifts: day.lifts.filter((_, x) => x !== i) });
+      }, 550);
+    };
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    row.addEventListener("pointerdown", start);
+    row.addEventListener("pointerup", cancel);
+    row.addEventListener("pointerleave", cancel);
+    row.addEventListener("pointercancel", cancel);
+    row.addEventListener("contextmenu", (e) => e.preventDefault());
+  });
 
   document.querySelectorAll("[data-range]").forEach((b) =>
     b.addEventListener("click", () => { range = Number(b.dataset.range); render(); }));

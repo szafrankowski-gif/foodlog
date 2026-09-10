@@ -21,8 +21,9 @@
 10. **フローとストックを混ぜない**（v3.1〜）：日次フロー（①食事・睡眠・体重）/実施ログ（②筋トレ・moves）/身体能力ストック（③day.meas）は別性質。③は測定タブ専用、ホームは1行ティッカーのみ。測定リマインドは週1（日曜夜）だけ。
 
 ## データスキーマ（day オブジェクト）
-`{ foods: [{name, p, c, veg, omega3, fiber, cat, t}], acts: ["trainA"|"trainB"|"climb"|"jiujitsu"|"mountain"|"aerobic"], actTimes: {}, workout: {checks:[], note}, moves: [{kind, min, t}], sleep, bedtime, waketime, weight, muscle, fatpct, rhr, steps, mood, wrist, creatine, vitd, comment, drill, meas: {gripR,gripL,kneeR,kneeL,boxR,boxL,hang,dips,dipsWide,dipsW,dipsWkg,pullup,pullupW,pullupWkg,swing,swing1Kg,swing1R,swing1L,bulgKg,tguKg,jump,waist}, measNote, _m }`
+`{ foods: [{name, p, c, veg, omega3, fiber, cat, t}], acts: ["trainA"|"trainB"|"climb"|"jiujitsu"|"mountain"|"aerobic"], actTimes: {}, workout: {checks:[], note}, moves: [{kind, min, t}], sleep, bedtime, waketime, weight, muscle, fatpct, rhr, steps, mood, wrist, creatine, vitd, comment, drill, meas: {gripR,gripL,kneeR,kneeL,boxR,boxL,hang,dips,dipsWide,dipsW,dipsWkg,pullup,pullupW,pullupWkg,swing,swing1Kg,swing1R,swing1L,bulgKg,tguKg,jump,waist}, measNote, lifts: [{ex, load, reps, sets, t}], _m }`
 - 後方互換を壊さない。旧フィールド（dayType等）はload()で移行。新フィールドはnull安全に。
+- 挙上（v4.1）：`lifts`のloadは文字列（"自重"/"KB16"/"+5"…）・数値換算はビュー側。種目マスタの初期値はコード（LIFT_DEF）、ユーザー追加分はlocalStorage `mealog:liftex`（端末ローカル・Gist同期外）。懸垂・ディップスの挙上記録はday.measの該当系列にも自動反映（二重入力させない）。
 
 ## 変更時の必須手順
 1. `node --check app.js` で構文確認
