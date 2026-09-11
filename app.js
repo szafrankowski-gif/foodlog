@@ -109,6 +109,32 @@ function weeklyDrill(anchorKey) {
   }
   return n;
 }
+// v4.0モック取り込み：週の部位カバレッジ（脚/押す/引く）ティッカー。メニューのチェックと挙上記録の両方を実績として数える。
+// 🔒48h＝当日または前日に実施（回復期間の目安。日単位で判定し、時刻は使わない＝捏造しない）
+const LIFT_CATS = [
+  { label: "脚",   checks: ["boxjump", "bulgarian", "slrdl", "calf", "swing", "stepup"], lifts: ["bulgarian", "rdl", "swing"] },
+  { label: "押す", checks: ["push"], lifts: ["dips"] },
+  { label: "引く", checks: ["pullup", "row"], lifts: ["pullup"] },
+];
+function catHit(dd, cat) {
+  if (!dd) return false;
+  const checks = ((dd.workout || {}).checks) || [];
+  if (cat.checks.some((id) => checks.includes(id))) return true;
+  return (dd.lifts || []).some((r) => cat.lifts.includes(r.ex));
+}
+// アンカー日基準：done=その週（月曜〜アンカー日）に実施あり／locked=アンカー日か前日に実施（48h回復中）
+function liftCatState(anchorKey) {
+  const w = weekInfo(anchorKey);
+  const a = new Date(anchorKey.split("-")[0], anchorKey.split("-")[1] - 1, anchorKey.split("-")[2]);
+  const yk = toKey(new Date(a.getFullYear(), a.getMonth(), a.getDate() - 1));
+  return LIFT_CATS.map((cat) => {
+    let done = false;
+    for (let i = 0; i < w.dayN; i++) {
+      if (catHit(data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))], cat)) { done = true; break; }
+    }
+    return { label: cat.label, done, locked: catHit(data[anchorKey], cat) || catHit(data[yk], cat) };
+  });
+}
 // 「一度だけ出す通知」の共通処理：初出日に記録し、その日のあいだは表示・以後は出さない
 function onceNote(storeKey, scope, active) {
   if (!active) return false;
@@ -1322,7 +1348,18 @@ function renderLog() {
       ${ACTS.map((t) =>
         `<button class="dt ${t==="aerobic"?"aero":"active"} ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
-    <div class="hint" style="margin-top:-8px;margin-bottom:8px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${DAY_KIND_LABEL[dayKind(day)]}</b> · 💪 今週の筋トレ <b class="mono" style="color:${weeklyTrain(key) >= 2 ? "var(--green)" : "var(--text)"}">${weeklyTrain(key)}</b>/2 · 🚶 Zone2 <b class="mono">${weeklyZone2(key)}</b>/${GOALS.zone2Max}分${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで実績）" : ""}</div>
+    <div class="hint" style="margin-top:-8px;margin-bottom:2px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${DAY_KIND_LABEL[dayKind(day)]}</b>${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで実績）" : ""}</div>
+    ${(() => {
+      // v4.0モック取り込み：週次ティッカー（部位カバレッジ・Zone2・食材の筆頭残）。🔒48h＝直近48hに実施＝回復中
+      const cats = liftCatState(key).map((c) =>
+        c.locked ? `<span style="color:var(--ice)">[${c.label} 🔒48h]</span>`
+        : c.done ? `<span style="color:var(--green)">[${c.label} ✓]</span>`
+        : `<span style="color:var(--muted)">[${c.label}]</span>`).join("");
+      const rem = PACE.find((row) => pc[row.key] < row.target);
+      const paceBit = rem ? `🐟 ${rem.label.split("・")[0]}あと${rem.target - pc[rem.key]}`
+        : `<span style="color:var(--green)">🐟 食材 ✓</span>`;
+      return `<div class="hint" style="margin-bottom:8px">🏋️ 今週: ${cats} · 🚶 Zone2 <b class="mono">${weeklyZone2(key)}</b>/${GOALS.zone2Max} · ${paceBit}</div>`;
+    })()}
     ${(() => {
       // §6 金曜時点で今週の筋トレ0回のときだけ、責めないリマインドを一度（毎日は出さない）
       const dow = new Date(key.split("-")[0], key.split("-")[1]-1, key.split("-")[2]).getDay();
