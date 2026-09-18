@@ -1,4 +1,4 @@
-/* foodlog v4.1 — 食事・トレーニングログPWA（増量フェーズ：挙上タップ記録・糖質下限管理・身体能力ストック）｜更新: 2026-09-10 */
+/* foodlog v4.2 — 食事・トレーニングログPWA（増量フェーズ：体重連動目標・増量気流・挙上タップ記録）｜更新: 2026-09-18 */
 "use strict";
 
 // v3.1 増量フェーズの目標値（一元管理。値の変更はここだけ／機能側にハードコードしない）
@@ -12,8 +12,7 @@ const GOALS = {
   zone2Max: 90,                                  // Zone2 週合計上限（分。増量優先。禁止でなく表示と週1通知のみ）
   midReview: 64.0,                               // 中間評価：この体重到達で再評価を一度だけ案内
 };
-const FLOOR = GOALS.proteinBase, CEILING = GOALS.proteinTrain;
-const CARB_FLOOR = { rest: GOALS.carbFloorRest, active: GOALS.carbFloorTrain }; // 血糖対策は量でなく質とタイミングで
+// 旧FLOOR/CEILING/CARB_FLOOR定数はv4.2で廃止：目標はgoalsFor()（係数×weight_ref）が唯一の出所。GOALSの固定値はデータ不足時のフォールバック専用
 const DATA_KEY = "mealog:data";
 const API_KEY_KEY = "mealog:apikey";
 const GH_TOKEN_KEY = "mealog:ghtoken";
@@ -239,6 +238,7 @@ let errMsg = "", setMsg = "";
 let inputText = "";
 let menuOpen = false, paceOpen = false, gaugeOpen = false, bgOpen = false; // 折りたたみ状態（メモリのみ・リロードで閉じる）
 let liftEx = null, liftLoad = null, liftReps = null, liftSets = null; // v4.1 挙上タップ入力の選択状態（メモリのみ）
+let airflowOpen = false; // v4.2 増量気流の根拠展開（メモリのみ）
 
 // ---------- ユーティリティ ----------
 const $ = (sel) => document.querySelector(sel);
@@ -255,10 +255,10 @@ function load() {
   let stored = null;
   try { const raw = localStorage.getItem(DATA_KEY); if (raw) stored = JSON.parse(raw); } catch (e) {}
   data = Object.assign({}, SEED, stored || {});
-  // v2移行：旧dayType宣言 → acts実績配列（旧データは宣言を実績として引き継ぐ）
+  // v2移行：旧dayType宣言 → acts実績配列（旧データは宣言を実績として引き継ぐ）。日付キーのみ対象（bulk_config等の特別キーは触らない）
   for (const k of Object.keys(data)) {
     const dd = data[k];
-    if (!dd) continue;
+    if (!dd || !isDayKey(k)) continue;
     if (dd.dayType === "active") dd.dayType = "climb";
     if (!Array.isArray(dd.acts)) {
       dd.acts = (dd.dayType && dd.dayType !== "rest") ? [dd.dayType] : [];
@@ -456,7 +456,7 @@ const MEAS_DEF = [
     note: "週1。増量の質の指標（体脂肪計の補完）。増減そのものは良し悪しにしない" },
 ];
 // 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
-// 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース失敗はmeasNoteに保存し測定ビューで分類可能に
+// 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース不成立はmeasNoteに保存し測定ビューで分類可能に
 // 種目実績のフリーテキストメモ（例：「ブルガリアン 24kg 左10 右10」）→ 実施ログ（workout.note）へ
 const EXERCISE_MEMO_RE = /^(ブルガリアン|TGU|ＴＧＵ|(?:片脚)?RDL|膝コロ|ステップアップ|ステップダウン|ワンハンドロウ|(?:スーツケース)?(?:マーチ|ホールド)|足上げプッシュアップ|プッシュアップ)/;
 function parseMeasText(text) {
@@ -624,7 +624,7 @@ function liftMeasPatch(rec) {
   else if (rec.ex === "bulgarian" && /^KB/i.test(String(rec.load))) m.bulgKg = kg;
   return Object.keys(m).length ? m : null;
 }
-// §3-1 フリーテキスト由来の挙上メモをパース成功時だけ同形式に正規化（失敗しても従来の保存はそのまま）
+// §3-1 フリーテキスト由来の挙上メモをパース成功時だけ同形式に正規化（読めない場合も従来の保存はそのまま）
 const LIFT_TEXT_RE = /^(ブルガリアン|ディップス|懸垂|(?:片脚)?RDL|(?:KB)?スイング)/;
 function parseLiftText(text) {
   const t = text.trim();
@@ -677,6 +677,170 @@ function latestBody(field) {
     if (dd && dd[field] != null) return { v: Number(dd[field]), ago: i };
   }
   return null;
+}
+
+// ---------- v4.2 体重連動式栄養目標＋増量気流（月次判定） ----------
+// 設計思想（§4）：判定は機械・伝達は天気・撤退線は封印・日常は沈黙。
+// 係数・撤退線・判定ログは data.bulk_config（日付キー以外の特別キー。_mで他キー同様にGist同期）に外出し＝ハードコードしない
+const BULK_DEF = {
+  coef: { p_base: 1.9, p_training: 2.2, p_cap: 2.5, c_rest: 4.5, c_training: 5.5, f_floor: 0.8 },
+  exit_lines: { weight_stop: 64.0, weight_goal: 64.5, fat_stop: 16.0, deadline: "2027-04-30", signed: "2026-09-15", signer: "本人" },
+  judgments: [],
+  exit_history: [],
+};
+const BULK_START_YM = "2026-09"; // v4.2運用開始月（この月末から判定）
+const isDayKey = (k) => /^\d{4}-\d{2}-\d{2}$/.test(k);
+function bulkCfg() {
+  const c = (data && data.bulk_config) || {};
+  return {
+    coef: Object.assign({}, BULK_DEF.coef, c.coef || {}),
+    exit_lines: Object.assign({}, BULK_DEF.exit_lines, c.exit_lines || {}),
+    judgments: Array.isArray(c.judgments) ? c.judgments : [],
+    exit_history: Array.isArray(c.exit_history) ? c.exit_history : [],
+  };
+}
+function saveBulk(patch) {
+  data.bulk_config = Object.assign({}, bulkCfg(), patch, { _m: Date.now() });
+  save();
+}
+// weight_ref＝その週の月曜時点の体重7日移動平均（週1回・月曜更新＝週の途中では動かない）
+function weightRefFor(anchorKey) {
+  return weightMA7(weekInfo(anchorKey).start);
+}
+// 体脂肪率の7日平均（記録が2日未満はnull）
+function fatMA7(endDate) {
+  let sum = 0, n = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(endDate); d.setDate(d.getDate() - i);
+    const v = data[toKey(d)] && data[toKey(d)].fatpct;
+    if (v != null && !isNaN(Number(v))) { sum += Number(v); n++; }
+  }
+  return n >= 2 ? sum / n : null;
+}
+// その日の栄養目標：係数×weight_ref（四捨五入g）。体重データ不足時は従来の固定値にフォールバック
+function goalsFor(anchorKey) {
+  const wr = weightRefFor(anchorKey);
+  const cf = bulkCfg().coef;
+  if (wr == null) return { wr: null, pBase: GOALS.proteinBase, pTrain: GOALS.proteinTrain, pCap: null,
+    cRest: GOALS.carbFloorRest, cTrain: GOALS.carbFloorTrain, fFloor: null };
+  const r = (x) => Math.round(wr * x);
+  return { wr: Math.round(wr * 10) / 10, pBase: r(cf.p_base), pTrain: r(cf.p_training), pCap: r(cf.p_cap),
+    cRest: r(cf.c_rest), cTrain: r(cf.c_training), fFloor: r(cf.f_floor) };
+}
+// トレ後2時間以内のC集計（§1）：その日の最後の挙上記録時刻を起点に、2時間以内の食事Cを合算
+function postTrainCarb(day) {
+  const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ""); return m ? lateMin(Number(m[1]) * 60 + Number(m[2])) : null; };
+  const ts = ((day && day.lifts) || []).map((r) => toMin(r.t)).filter((v) => v != null);
+  if (!ts.length) return null;
+  const anchor = Math.max(...ts);
+  let c = 0;
+  for (const f of (day.foods || [])) {
+    const m = toMin(f.t);
+    if (m != null && m >= anchor && m <= anchor + 120) c += Number(f.c) || 0;
+  }
+  return { c };
+}
+// ---- 月次判定エンジン（§2。毎月末日に計算し翌月の方向を決める。判定は機械・承認は本人） ----
+const MAIN_LIFTS = ["dips", "pullup", "swing", "bulgarian"];
+const ymOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+const monthEnd = (ym) => { const [y, m] = ym.split("-").map(Number); return new Date(y, m, 0); };
+const prevYm = (ym) => { const [y, m] = ym.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`; };
+const nextYm = (ym) => { const [y, m] = ym.split("-").map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${pad(m + 1)}`; };
+// L＝主要4種目のうち当月内に前進判定（v4.1 §2-3）が1回以上出た種目数
+function monthProgressCount(ym) {
+  const hit = {};
+  for (const k of Object.keys(data).sort()) {
+    if (!isDayKey(k) || !k.startsWith(ym + "-")) continue;
+    const ls = (data[k] && data[k].lifts) || [];
+    for (let i = 0; i < ls.length; i++) {
+      const r = ls[i];
+      if (!MAIN_LIFTS.includes(r.ex) || hit[r.ex]) continue;
+      const j = judgeLift(r, liftPrev(r.ex, k, i));
+      if (j && j.up) hit[r.ex] = true;
+    }
+  }
+  return Object.keys(hit).length;
+}
+// 判定マトリクス（上から順に評価）。judgments＝それ以前の判定ログ（F2ヶ月連続・加速3連続の参照用）
+function computeJudgment(ym, judgments) {
+  const el = bulkCfg().exit_lines;
+  const wCur = weightMA7(monthEnd(ym)), wPrev = weightMA7(monthEnd(prevYm(ym)));
+  const fCur = fatMA7(monthEnd(ym)), fPrev = fatMA7(monthEnd(prevYm(ym)));
+  const rd = (v) => v == null ? null : Math.round(v * 10) / 10;
+  const W = (wCur != null && wPrev != null) ? rd(wCur - wPrev) : null;
+  const F = (fCur != null && fPrev != null) ? rd(fCur - fPrev) : null;
+  const L = monthProgressCount(ym);
+  const pj = judgments.find((j) => j.month === prevYm(ym));
+  const pj2 = judgments.find((j) => j.month === prevYm(prevYm(ym)));
+  let verdict = "cruise", note = "";
+  if ((wCur != null && wCur >= el.weight_stop) || (fCur != null && fCur >= el.fat_stop)) {
+    verdict = "stop";
+    note = (wCur != null && wCur >= el.weight_stop) ? `${el.weight_stop}kg到達` : `体脂肪${el.fat_stop}%到達`;
+  } else if ((W != null && W > 0.7) || (F != null && F > 0.3 && pj && pj.F != null && pj.F > 0.3)) {
+    verdict = "headwind";
+  } else if (W != null && W < 0.5 && F != null && F <= 0 && L >= 2) {
+    // 加速の連続は2回まで：3ヶ月連続はSTOP扱い（チーム会議へ）
+    if (pj && pj.verdict === "tailwind" && pj2 && pj2.verdict === "tailwind") { verdict = "stop"; note = "3ヶ月連続の加速判定"; }
+    else verdict = "tailwind";
+  }
+  if (verdict === "cruise" && W == null) note = "体重データ不足のため巡航扱い";
+  return { month: ym, W, F, L, verdict, approved: false, consulted: false, applied_coef_delta: 0, note };
+}
+// 月末日を迎えた未判定の月を昇順に判定してログへ。巡航は変更なし＝そのまま確定（カードは出さない）
+function ensureJudgments() {
+  const today = logicalToday();
+  const isMonthEndDay = today.getDate() === new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const lastYm = isMonthEndDay ? ymOf(today) : prevYm(ymOf(today));
+  if (lastYm < BULK_START_YM) return;
+  const js = bulkCfg().judgments.slice();
+  const done = new Set(js.map((j) => j.month));
+  let changed = false;
+  for (let ym = BULK_START_YM; ym <= lastYm; ym = nextYm(ym)) {
+    if (done.has(ym)) continue;
+    const j = computeJudgment(ym, js);
+    if (j.verdict === "cruise") j.approved = true; // 承認対象の変更がない
+    js.push(j); changed = true;
+  }
+  if (changed) saveBulk({ judgments: js });
+}
+// 承認待ちの判定（巡航以外・未承認・未相談の最新）
+function pendingJudgment() {
+  return bulkCfg().judgments.filter((j) => j.verdict !== "cruise" && !j.approved && !j.consulted).pop() || null;
+}
+// ---- 増量気流（§3-1）：現在の方向。数字は出さない（タップで根拠展開） ----
+function airflowState() {
+  const today = logicalToday();
+  const cfg = bulkCfg();
+  const el = cfg.exit_lines;
+  const wr = weightRefFor(toKey(today));
+  const fat = fatMA7(today);
+  const m = today.getMonth() + 1;
+  if (wr != null && wr >= el.weight_stop) return { icon: "🚩", kind: "stop", text: `${el.weight_stop}kg到達。中間評価へ` };
+  if (fat != null && fat >= el.fat_stop) return { icon: "🚩", kind: "stop", text: `体脂肪${el.fat_stop}%ライン到達。中間評価へ` };
+  if (toKey(today) > el.deadline) return { icon: "🚩", kind: "stop", text: "増量期間の一区切り（開始9ヶ月）。中間評価へ" };
+  const last = cfg.judgments[cfg.judgments.length - 1] || null;
+  if (last && last.verdict === "stop") return { icon: "🚩", kind: "stop", text: `停止：${last.note || "中間評価へ"}。チーム会議へ` };
+  // 今月の方向＝前月末judgmentの承認結果
+  const j = cfg.judgments.find((x) => x.month === prevYm(ymOf(today)) && x.approved);
+  if (j && j.verdict === "tailwind") return { icon: "🌤", kind: "tail", text: `追い風要請：+おにぎり1個/日 — ${m}月末までの試験` };
+  if (j && j.verdict === "headwind") return { icon: "🌧", kind: "head", text: `向かい風：Cを一段しぼる — あなたのせいではなく気流の話` };
+  return { icon: "⛅", kind: "cruise", text: `増量気流：順風 — いまのペースで。次の判定 ${m}/末` };
+}
+const VERDICT_LABEL = { tailwind: "🌤 追い風要請", headwind: "🌧 向かい風", stop: "🚩 停止", cruise: "⛅ 順風" };
+// チーム相談用のエクスポートテキスト（チャット貼り付け用）
+function judgmentExportText(j) {
+  const cfg = bulkCfg();
+  const G = goalsFor(toKey(logicalToday()));
+  return [
+    `【foodlog 月次判定データ ${j.month}】`,
+    `判定：${VERDICT_LABEL[j.verdict] || j.verdict}${j.note ? `（${j.note}）` : ""}`,
+    `W（体重ペースkg/月・7日平均差）：${j.W ?? "データ不足"}`,
+    `F（体脂肪率変化pt/月）：${j.F ?? "データ不足"}`,
+    `L（主要4種目の前進数）：${j.L}`,
+    `weight_ref：${G.wr ?? "—"}kg／係数：P ${cfg.coef.p_base}/${cfg.coef.p_training}・C ${cfg.coef.c_rest}/${cfg.coef.c_training}`,
+    `現在の目標：P ${G.pBase}/${G.pTrain}g・C下限 ${G.cRest}/${G.cTrain}g`,
+    `判定基準：STOP=体重${cfg.exit_lines.weight_stop}kg or 体脂肪${cfg.exit_lines.fat_stop}%／減速=W>+0.7 or F>+0.3×2ヶ月／加速=W<+0.5 かつ F≤0 かつ L≥2`,
+  ].join("\n");
 }
 
 // ---------- Anthropic API ----------
@@ -753,7 +917,8 @@ async function fetchBakao(key) {
   const day = getDay(key);
   const total = sumP(day), carbs = sumC(day);
   const active = isActiveDay(day);
-  const target = active ? CEILING : FLOOR;
+  const G = goalsFor(key); // v4.2：体重連動目標（係数×weight_ref）
+  const target = active ? G.pTrain : G.pBase;
   const hasVeg = day.foods.some((f) => f.veg);
   const hasOmega3 = day.foods.some((f) => f.omega3);
   const foodList = day.foods.map((f) => `${f.t ? f.t + " " : ""}${f.name}(P${f.p}${f.c != null ? "/C" + f.c : ""})`).join("、");
@@ -789,7 +954,7 @@ async function fetchBakao(key) {
 現在時刻：${hh}:${mm}
 時間帯の扱い（最重要）：${phaseNote}
 
-目標：たんぱく質は基準${FLOOR}g（毎日必達）、筋トレ日・高強度日は${CEILING}gを目標にする（上限ではなく、超えても全く問題ない）。糖質は下限管理：休養日${GOALS.carbFloorRest}g・筋トレ/高強度日${GOALS.carbFloorTrain}gを下回らないことが目標で、上限は設けない（血糖対策は玄米優先・食後散歩・ドカ食い回避という質とタイミングで行い、総量は絞らない）。P残・C下限残があるときは、具体的な食品での埋め方をひとつ示す（例：おにぎり1個で糖質+40g、プロテイン1杯でP+20g）。
+目標（v4.2 体重連動式：係数×体重7日平均で週1自動更新）：たんぱく質は基準${G.pBase}g（毎日必達）、筋トレ日・高強度日は${G.pTrain}gを目標にする（上限ではなく、超えても全く問題ない）。糖質は下限管理：休養日${G.cRest}g・筋トレ/高強度日${G.cTrain}gを下回らないことが目標で、上限は設けない（血糖対策は玄米優先・食後散歩・ドカ食い回避という質とタイミングで行い、総量は絞らない）。筋トレ日はトレ後2時間以内に糖質40〜60gの補給が目安（達成していたら軽く肯定してよい）。P残・C下限残があるときは、具体的な食品での埋め方をひとつ示す（例：おにぎり1個で糖質+40g、プロテイン1杯でP+20g）。増量ペースの良し悪し（速い・遅い等）の裁定は月次判定エンジンの担当なので、日々の評価では体重の増減ペースを判定・論評しない。
 
 筋トレ設計：週2必須・最優先。自宅装備（KB16/24kg・プライオボックス・懸垂バー・ディップススタンド等）でA（脚＋引き）/B（登山脚＋押し・ロウ）の週2。片脚系・下半身優先（柔術・山・ドラツーの3ゴールとも下半身が律速）。加えてドライツーリング週1＋柔術復帰ドリル週1-2。懸垂は少なめの設定（2-3セット）が正しい状態で、増やすことを促さない（プルはドラツーが担う）。KBスイングはフォーム優先。「速度が落ちたら終了」を支持し回数増を煽らない。Zone2有酸素は週${GOALS.zone2Max}分上限（増量優先）。上限を上回っているときは回復を推す。グリップは強化対象（目標${GOALS.grip}kg）。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレA翌日は殿筋・ハム、B翌日は胸・肩・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・懸垂・ディップス・ハング・膝壁・腹囲）の向上は増量の進捗として肯定的に扱う。ただし腹囲が体重より明らかに速く増える傾向が続く場合のみ、体脂肪率の確認を軽く促す（減量提案はしない）。本人の記述に中止サイン（鼠径部の痛み・肘内側の一点痛・腰からのしびれ等）があれば、その種目の中止・変更と、続く場合の医療機関相談を勧める。体重が${GOALS.midReview}kgに到達している場合、中間評価（パフォーマンス再評価）のタイミングであることに一度だけ軽く触れてよい（毎回繰り返さない）。翌朝の手首に違和感が出たら一段戻すルール。
 
@@ -799,7 +964,7 @@ async function fetchBakao(key) {
 
 対象日（${dateLabel}・${actLabel(day)}＝${DAY_KIND_LABEL[dayKind(day)]}）のデータ：
 - たんぱく質：${total}g（目標${target}g${total < target ? `・残り${target - total}g` : "・到達"}）
-- 糖質：${carbs}g（下限${CARB_FLOOR[active ? "active" : "rest"]}g${carbs < CARB_FLOOR[active ? "active" : "rest"] ? `・下限まであと${CARB_FLOOR[active ? "active" : "rest"] - carbs}g` : "・下限達成"}）
+- 糖質：${carbs}g（下限${active ? G.cTrain : G.cRest}g${carbs < (active ? G.cTrain : G.cRest) ? `・下限まであと${(active ? G.cTrain : G.cRest) - carbs}g` : "・下限達成"}）
 - 歩数：${day.steps != null ? day.steps.toLocaleString() + "歩（参考値。目標や警告には使わない。ただし休養日で15,000歩を超えている日は、糖質+40〜50g程度の追加補給に軽く触れてよい。責めない・警告調にしない）" : "記録なし"}
 - サプリ：クレアチン${creatineOn(day) ? "済" : "未"}／ビタミンD${vitdOn(day) ? "済" : "未"}（クレアチン3〜5gは毎日方針。未の日はごく軽く一言リマインドしてよい。説教はしない）
 - Zone2有酸素：本日${dayActs(day).includes("aerobic") ? "実施" : "なし"}／今週の速歩等 ${weeklyZone2(key)}分（上限${GOALS.zone2Max}分・増量優先。上限を上回っているときだけ「残りは回復に」と軽く言う。未実施は全く問題にしない。糖質目標には影響しない）
@@ -1006,7 +1171,7 @@ function fileHHMM(file, key) {
 // 下部バーの万能入力：運動・体重・睡眠はAIを介さずローカル判定（APIキー不要）。
 // 全トークンがローカル解釈できた場合のみ適用し、それ以外は食事としてAI概算へ回す。
 function parseLocalInput(text) {
-  // 測定（③ストック）：行頭が測定種目ならローカルで確定（パース失敗でもAIに回さずメモ保存）
+  // 測定（③ストック）：行頭が測定種目ならローカルで確定（パース不成立でもAIに回さずメモ保存）
   const meas = parseMeasText(text);
   if (meas) return { patch: {}, moves: [], meas: meas.meas || null, measNote: meas.note || null, wnote: meas.wnote || null };
   // 種目実績メモ（②実施ログ）：ブルガリアン等のフリーテキストはworkout.noteへ（パース不要・保存のみ）
@@ -1061,7 +1226,7 @@ async function submitText() {
       updateDay(key, { foods: day.foods.concat(stampFoods(items, key)), comment: null });
     }
   } catch (e) {
-    errMsg = e.message === "NO_KEY" ? "設定タブでAPIキーを登録してください。" : `概算に失敗しました：${(e && e.message) || "通信とAPIキーを確認してください"}`;
+    errMsg = e.message === "NO_KEY" ? "設定タブでAPIキーを登録してください。" : `概算ができませんでした：${(e && e.message) || "通信とAPIキーを確認してください"}`;
   } finally { busy = false; render(); }
 }
 
@@ -1079,7 +1244,7 @@ async function onPhotoPicked(file) {
       inputText = "";
       updateDay(key, { foods: day.foods.concat(stampFoods(items, key, await photoHHMM(file, key))), comment: null });
     }
-  } catch (e) { errMsg = `写真の解析に失敗しました：${(e && e.message) || "もう一度試してください"}`; }
+  } catch (e) { errMsg = `写真の解析ができませんでした：${(e && e.message) || "もう一度試してください"}`; }
   finally { busy = false; render(); }
 }
 
@@ -1091,7 +1256,7 @@ async function getBakao() {
   try {
     const c = await fetchBakao(key);
     if (c) updateDay(key, { comment: c });
-  } catch (e) { errMsg = `評価の取得に失敗しました：${e && e.message === "NO_KEY" ? "APIキー未登録" : (e && e.message) || "不明なエラー（通信環境を確認してください）"}`; }
+  } catch (e) { errMsg = `評価の取得ができませんでした：${e && e.message === "NO_KEY" ? "APIキー未登録" : (e && e.message) || "不明なエラー（通信環境を確認してください）"}`; }
   finally { commentBusy = false; render(); }
 }
 
@@ -1121,7 +1286,7 @@ async function onInbodyPicked(file) {
       }
       updateDay(key, patch);
     }
-  } catch (e) { errMsg = `読み取りに失敗しました：${(e && e.message) || "もう一度試してください"}`; }
+  } catch (e) { errMsg = `読み取りができませんでした：${(e && e.message) || "もう一度試してください"}`; }
   finally { busy = false; render(); }
 }
 
@@ -1279,6 +1444,7 @@ function applyFillAnim() {
 }
 
 function render() {
+  ensureJudgments(); // v4.2：月末日を迎えた未判定の月があれば機械判定してログに積む（冪等・巡航は自動確定）
   const app = $("#app");
   const wide = isWide();
   let body;
@@ -1308,16 +1474,18 @@ function renderLog() {
   const day = getDay(key);
   const total = sumP(day), carbs = sumC(day);
   const active = isActiveDay(day);
-  const target = active ? CEILING : FLOOR;
+  // v4.2：目標は係数×weight_ref（週1・月曜更新）。データ不足時は従来固定値にフォールバック
+  const G = goalsFor(key);
+  const target = active ? G.pTrain : G.pBase;
   const isToday = toKey(logicalToday()) === key;
-  const hitFloor = total >= FLOOR, hitCeil = total >= CEILING;
-  // 120g到達もgreen（amberは注意・境界系に一本化。「120gは超えても問題ない」思想と色を揃え、到達は✓で伝える）
+  const hitFloor = total >= G.pBase, hitCeil = total >= G.pTrain;
+  // 120g到達もgreen（amberは注意・境界系に一本化。「基準は超えても問題ない」思想と色を揃え、到達は✓で伝える）
   const barColor = hitFloor ? "var(--green)" : "var(--ice)";
-  const pct = Math.min(total / CEILING, 1) * 100;
-  const floorPct = (FLOOR / CEILING) * 100;
+  const pct = Math.min(total / G.pTrain, 1) * 100;
+  const floorPct = (G.pBase / G.pTrain) * 100;
   // §3 糖質は下限管理：足りない日だけ気にする。多い分は警告しない（増量フェーズ）
   const kind = dayKind(day);
-  const carbFloor = CARB_FLOOR[active ? "active" : "rest"];
+  const carbFloor = active ? G.cTrain : G.cRest;
   const carbColor = carbBarColor(carbs, carbFloor);
   const carbPct = Math.min(carbFloor > 0 ? carbs / carbFloor : 0, 1) * 100;
   const carbDiff = carbs < carbFloor ? `下限まであと ${carbFloor - carbs}g` : `下限達成${carbs > carbFloor ? ` +${carbs - carbFloor}g` : ""}`;
@@ -1335,6 +1503,46 @@ function renderLog() {
   const wd = ["日","月","火","水","木","金","土"][new Date(key.split("-")[0], key.split("-")[1]-1, key.split("-")[2]).getDay()];
 
   return `
+    ${(() => {
+      // v4.2 §3-1 増量気流・1行（ホーム最上部・常設）：数字は出さない。タップで根拠展開
+      const af = airflowState();
+      const bc = af.kind === "tail" ? "var(--green)" : af.kind === "head" ? "var(--amber)" : af.kind === "stop" ? "#E08C8C" : "#3A8FA3";
+      const cfg = bulkCfg();
+      const last = cfg.judgments[cfg.judgments.length - 1] || null;
+      const detail = airflowOpen ? `
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6">
+          weight_ref <b class="mono" style="color:var(--text)">${G.wr ?? "—"}</b>kg（月曜更新の7日平均）
+          ／ 今週の目標：P <b class="mono">${G.pBase}/${G.pTrain}</b>g・C下限 <b class="mono">${G.cRest}/${G.cTrain}</b>g
+          ／ 係数：C <b class="mono">${cfg.coef.c_rest}/${cfg.coef.c_training}</b>g/kg
+          ${last ? `<br>前回判定（${last.month}）：${VERDICT_LABEL[last.verdict]}／W ${last.W ?? "—"}・F ${last.F ?? "—"}・L ${last.L}` : ""}
+        </div>` : "";
+      return `<div class="card" data-airflow style="margin:0 16px 10px;padding:9px 12px;border-left:3px solid ${bc};cursor:pointer;font-size:13.5px">
+        ${af.icon} ${af.text}<span class="chev" style="float:right;color:var(--muted)">${airflowOpen ? "▾" : "▸"}</span>${detail}
+      </div>`;
+    })()}
+    ${(() => {
+      // v4.2 §3-2 月次判定カード：巡航月は出さない。承認するまで係数は変わらない（自動適用しない）
+      const j = pendingJudgment();
+      if (!j) return "";
+      const delta = j.verdict === "tailwind" ? 0.5 : -0.5;
+      const gDelta = G.wr != null ? `＝約${delta > 0 ? "+" : "−"}${Math.round(G.wr * Math.abs(delta))}g/日` : "";
+      const el = bulkCfg().exit_lines;
+      return `<div class="section" style="padding-top:0;padding-bottom:10px"><div class="card" style="padding:12px 14px">
+        <div style="font-size:15px;font-weight:600">${VERDICT_LABEL[j.verdict]}（${j.month} 月次判定）${j.note ? `<span style="font-weight:400;color:var(--muted)"> — ${esc(j.note)}</span>` : ""}</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:6px;line-height:1.7">
+          W 体重ペース：<b class="mono" style="color:var(--text)">${j.W ?? "—"}</b> kg/月（減速&gt;+0.7／加速&lt;+0.5）<br>
+          F 体脂肪変化：<b class="mono" style="color:var(--text)">${j.F ?? "—"}</b> pt/月（減速は+0.3が2ヶ月連続／加速はF≤0）<br>
+          L 挙上前進：<b class="mono" style="color:var(--text)">${j.L}</b>/4種目（加速はL≥2）<br>
+          <span style="font-size:12px">エネルギーは参考値の扱い：推定TDEE＋200〜250kcal相当を係数に織り込み済み（目標にはしない）</span>
+        </div>
+        <div class="setrow" style="margin-top:10px">
+          ${j.verdict === "stop"
+            ? `<span style="font-size:13px;color:var(--amber)">停止ライン（${el.weight_stop}kg／${el.fat_stop}%）。チーム会議で中間評価を。</span>`
+            : `<button class="setbtn" data-bulkapprove="${j.month}">承認する（C下限 ${delta > 0 ? "+" : "−"}${Math.abs(delta)}g/kg${gDelta}）</button>`}
+          <button class="setbtn ghost" data-bulkconsult="${j.month}">チームと相談（データ書き出し）</button>
+        </div>
+      </div></div>`;
+    })()}
     <div class="datenav">
       <button class="navbtn" data-move="-1">‹</button>
       <div>
@@ -1449,6 +1657,13 @@ function renderLog() {
         <span class="mono" style="flex-shrink:0;font-size:14px;color:${carbs >= carbFloor ? "var(--green)" : "var(--muted)"}">${carbDiff}</span>
       </div>
       ${carbRemind ? `<div style="font-size:13px;color:var(--ice);margin-top:6px">下限まであと${carbFloor - carbs}g。おにぎり1個で+40gです。</div>` : ""}
+      ${(() => {
+        // v4.2 §1 c_post_training：筋トレ日のみ、最後の挙上記録から2時間以内のCを集計表示（未達を責めない・事実と目安のみ）
+        if (kind !== "train") return "";
+        const ptc = postTrainCarb(day);
+        if (!ptc) return "";
+        return `<div style="font-size:13px;color:${ptc.c >= 40 ? "var(--green)" : "var(--muted)"};margin-top:6px">🕑 トレ後2h以内のC：<b class="mono">${ptc.c}</b>g（目安40〜60g）${ptc.c >= 40 ? " ✓" : ""}</div>`;
+      })()}
     </div>`;
       const gauge = gaugeBig ? `
     <div class="gaugewrap" ${achieved ? `data-gaugetoggle style="cursor:pointer"` : ""}>
@@ -1463,13 +1678,13 @@ function renderLog() {
         <div class="gtarget">今日の目標 ${target}g（${actLabel(day)}）</div>
         <div class="statusrow">
           <span class="box ${hitFloor?"on":""}">${hitFloor?"✓":""}</span>
-          <span>基準 ${FLOOR}g</span>
-          <span class="detail mono" style="color:${hitFloor?"var(--green)":"var(--muted)"}">${hitFloor?"到達 · 合格":`あと ${FLOOR-total}g`}</span>
+          <span>基準 ${G.pBase}g</span>
+          <span class="detail mono" style="color:${hitFloor?"var(--green)":"var(--muted)"}">${hitFloor?"到達 · 合格":`あと ${G.pBase-total}g`}</span>
         </div>
         <div class="statusrow" style="opacity:${active?1:.5}">
           <span class="box ${hitCeil?"on":""}">${hitCeil?"✓":""}</span>
-          <span>筋トレ・高強度日 ${CEILING}g</span>
-          <span class="detail mono" style="color:${hitCeil?"var(--green)":"var(--muted)"}">${hitCeil?"到達":`あと ${CEILING-total}g`}</span>
+          <span>筋トレ・高強度日 ${G.pTrain}g</span>
+          <span class="detail mono" style="color:${hitCeil?"var(--green)":"var(--muted)"}">${hitCeil?"到達":`あと ${G.pTrain-total}g`}</span>
         </div>
         ${wavg != null ? `<div class="weekavg">直近7日平均　<span class="mono" style="color:var(--text);font-size:16px">${wavg}g</span></div>` : ""}
       </div>
@@ -1648,18 +1863,15 @@ function renderLog() {
       const bp = bulkPace();
       if (bp.cur == null) return "";
       const pace = bp.delta;
-      const paceTxt = pace == null ? `<span style="color:var(--muted)">ペース判定はデータ30日分から</span>`
-        : pace < 0 ? `<span style="color:var(--amber)">今月 ${pace.toFixed(1)}kg — 減っています。食事量の見直しを</span>`
-        : pace < GOALS.weightRateMin ? `<span style="color:var(--ice)">今月 +${pace.toFixed(1)}kg — 増えていません。おにぎり1個＋プロテイン1杯の上乗せを検討</span>`
-        : pace <= GOALS.weightRateMax ? `<span style="color:var(--green)">今月 +${pace.toFixed(1)}kg 🟢 順調</span>`
-        : `<span style="color:var(--ice)">今月 +${pace.toFixed(1)}kg — ペース速め。体脂肪率も確認を</span>`;
+      // v4.2 §4：日常は沈黙——日々のペースの良し悪しは裁定しない（方向判定は月次エンジン＝気流欄が担当）。ここは事実のみ
+      const paceTxt = pace == null ? `<span style="color:var(--muted)">ペース算出はデータ30日分から</span>`
+        : `<span style="color:var(--muted)">今月 <b class="mono" style="color:var(--text)">${pace >= 0 ? "+" : ""}${pace.toFixed(1)}</b>kg（方向の判定は月次・上の気流欄）</span>`;
       const mus = latestBody("muscle");
       const fat = latestBody("fatpct");
       return `<div class="section" style="padding-top:0;padding-bottom:8px"><div class="card" style="padding:12px 14px">
         <div style="font-size:15px">⚖️ <b class="mono">${fmt1(day.weight) || "—"}</b>kg（7日平均 <b class="mono">${bp.cur.toFixed(1)}</b>）｜目標 <b class="mono">${GOALS.weightTarget}</b></div>
         <div style="font-size:13px;margin-top:6px">${paceTxt}</div>
         ${mus ? `<div style="font-size:13px;color:var(--muted);margin-top:4px">筋量 <b class="mono" style="color:var(--green)">${mus.v}</b>kg${fat ? ` ・体脂肪 <b class="mono">${fat.v}</b>%` : ""}</div>` : ""}
-        ${fat && fat.v > GOALS.fatCeil ? `<div style="font-size:13px;color:var(--ice);margin-top:4px">体脂肪率が${GOALS.fatCeil}%を上回っています。間食の内容を糖質・たんぱく質中心に寄せてみましょう（増量は継続でOK）。</div>` : ""}
         ${onceNote("mealog:mid64", "mid64", bp.cur >= GOALS.midReview) ? `<div style="font-size:13px;color:var(--green);margin-top:4px">📍 ${GOALS.midReview}kg到達。パフォーマンス再評価のタイミングです（チーム会議へ）。</div>` : ""}
       </div></div>`;
     })()}
@@ -1887,8 +2099,9 @@ function renderReview() {
     });
   }
   const logged = days.filter((x) => x.has);
+  const HG = goalsFor(toKey(logicalToday())); // v4.2：履歴の基準線も現行の体重連動目標で表示
   const avgP = logged.length ? Math.round(logged.reduce((s, x) => s + x.p, 0) / logged.length) : 0;
-  const floorDays = logged.filter((x) => x.p >= FLOOR).length;
+  const floorDays = logged.filter((x) => x.p >= HG.pBase).length;
   const creDays = logged.filter((x) => x.creatine).length;
   const vdDays = logged.filter((x) => x.vitd).length;
   const om3Days = days.filter((x) => x.omega3).length;
@@ -1902,15 +2115,15 @@ function renderReview() {
       <button class="btn-s" data-csv style="margin-left:auto">⬇ CSV</button>
     </div>
     <div class="sumgrid">
-      <div class="sumcard"><div class="sumlabel">平均たんぱく質</div><div><span class="sumval mono" style="color:${avgP>=FLOOR?"var(--green)":"var(--ice)"}">${avgP}</span><span class="sumunit mono"> g</span></div><div class="sumnote">記録 ${logged.length}日</div></div>
-      <div class="sumcard"><div class="sumlabel">基準${FLOOR}g 達成</div><div><span class="sumval mono" style="color:var(--green)">${floorDays}</span><span class="sumunit mono">/${logged.length}日</span></div><div class="sumnote">合格した日数</div></div>
+      <div class="sumcard"><div class="sumlabel">平均たんぱく質</div><div><span class="sumval mono" style="color:${avgP>=HG.pBase?"var(--green)":"var(--ice)"}">${avgP}</span><span class="sumunit mono"> g</span></div><div class="sumnote">記録 ${logged.length}日</div></div>
+      <div class="sumcard"><div class="sumlabel">基準${HG.pBase}g 達成</div><div><span class="sumval mono" style="color:var(--green)">${floorDays}</span><span class="sumunit mono">/${logged.length}日</span></div><div class="sumnote">合格した日数</div></div>
       <div class="sumcard"><div class="sumlabel">💊 クレアチン</div><div><span class="sumval mono" style="color:${creDays===logged.length&&logged.length?"var(--green)":"var(--ice)"}">${creDays}</span><span class="sumunit mono">/${logged.length}日</span></div><div class="sumnote">ビタミンD ${vdDays}日</div></div>
       <div class="sumcard"><div class="sumlabel">魚(オメガ3)</div><div><span class="sumval mono" style="color:var(--ice)">${om3Days}</span><span class="sumunit mono"> 日</span></div><div class="sumnote">緑黄${vegDays}·繊維${fiDays}日</div></div>
     </div>
     <div class="chartbox">
       <div class="seclabel">たんぱく質の推移</div>
-      ${proteinChart(days)}
-      <div class="chartnote">緑の破線＝基準${FLOOR}g／橙線＝筋トレ・高強度日${CEILING}g</div>
+      ${proteinChart(days, HG)}
+      <div class="chartnote">緑の破線＝基準${HG.pBase}g／橙線＝筋トレ・高強度日${HG.pTrain}g</div>
     </div>
     <div class="chartbox">
       <div class="seclabel">⚖️ 体重の推移</div>
@@ -1936,14 +2149,14 @@ function renderReview() {
             <span class="daydate mono">${x.label}</span>
             ${x.badge?`<span class="daybadge">${x.badge}</span>`:""}
             <span class="dayicons">${x.veg?"🥬":""}${x.omega3?"🐟":""}${x.fiber?"🌾":""}${x.creatine?"💊":""}${x.steps!=null?`<span class="mono" style="font-size:12px;color:var(--muted)"> ${(x.steps/1000).toFixed(1)}k歩</span>`:""}</span>
-            <span class="dayp mono" style="color:${!x.has?"var(--muted)":x.p>=FLOOR?"var(--green)":"var(--ice)"}">${x.has?x.p+"g":"—"}</span>
+            <span class="dayp mono" style="color:${!x.has?"var(--muted)":x.p>=HG.pBase?"var(--green)":"var(--ice)"}">${x.has?x.p+"g":"—"}</span>
           </div>`).join("")}
       </div>
     </div>
   `;
 }
 
-function proteinChart(days) {
+function proteinChart(days, HG) {
   const W = 448, H = 180, padL = 30, padB = 18, padT = 8;
   // 140g超の日を無言でクリップしない（スケールを実測に追従させ、頑張った日の差分を残す）
   const maxY = Math.max(140, ...days.map((d) => d.has ? d.p : 0));
@@ -1953,7 +2166,7 @@ function proteinChart(days) {
     const x = padL + i * iw + iw * 0.15;
     const bw = iw * 0.7;
     const v = d.has ? d.p : 0;
-    const color = v >= FLOOR ? "#7FD68B" : v > 0 ? "#5FC9DE" : "#22303C"; // 120g超もgreen（amberは注意系に一本化）
+    const color = v >= HG.pBase ? "#7FD68B" : v > 0 ? "#5FC9DE" : "#22303C"; // 基準超もgreen（amberは注意系に一本化）
     const h = (H - padT - padB) * (Math.min(v, maxY) / maxY);
     return `<rect x="${x.toFixed(1)}" y="${(H - padB - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="2" fill="${color}"/>`;
   }).join("");
@@ -1967,8 +2180,8 @@ function proteinChart(days) {
     `<line x1="${padL}" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
     ${grid}${axis}${bars}
-    <line x1="${padL}" x2="${W}" y1="${y(FLOOR).toFixed(1)}" y2="${y(FLOOR).toFixed(1)}" stroke="#7FD68B" stroke-width="1.5" stroke-dasharray="4 3"/>
-    <line x1="${padL}" x2="${W}" y1="${y(CEILING).toFixed(1)}" y2="${y(CEILING).toFixed(1)}" stroke="#F0B458" stroke-width="1.5"/>
+    <line x1="${padL}" x2="${W}" y1="${y(HG.pBase).toFixed(1)}" y2="${y(HG.pBase).toFixed(1)}" stroke="#7FD68B" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <line x1="${padL}" x2="${W}" y1="${y(HG.pTrain).toFixed(1)}" y2="${y(HG.pTrain).toFixed(1)}" stroke="#F0B458" stroke-width="1.5"/>
     ${labels}
   </svg>`;
 }
@@ -2083,6 +2296,27 @@ function renderSettings() {
         </div>
         ${setMsg && setMsg.startsWith("血糖予報") ? `<div class="okmsg">${esc(setMsg)}</div>` : ""}
       </div>
+
+      ${(() => {
+        // v4.2 §3-3 撤退線カード：3線を封印表示。変更は2段階確認＋理由必須＋履歴保存（コミットメント装置）
+        const el = bulkCfg().exit_lines;
+        const hist = bulkCfg().exit_history;
+        const dl = el.deadline ? `${el.deadline.split("-")[0]}年${Number(el.deadline.split("-")[1])}月末` : "—";
+        return `<div class="card setbox">
+        <div class="settitle">🧭 撤退線（増量フェーズの3線・封印）</div>
+        <div class="setdesc" style="line-height:1.9">
+          ⚖️ <b style="color:var(--text)">${el.weight_goal}kg</b> — 目標到達 → 維持へ移行（${el.weight_stop}kgで中間評価）<br>
+          🔥 <b style="color:var(--text)">${el.fat_stop}%</b> — 体脂肪7日平均 → 停止・チーム会議<br>
+          📅 <b style="color:var(--text)">${dl}</b> — 開始9ヶ月 → 結果に関わらず一区切り
+        </div>
+        <div style="font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:8px">この3線は増量開始時の判断です。変更にはチーム会議を経ること —— ${esc(el.signed)} ${esc(el.signer)}</div>
+        ${hist.length ? `<div style="font-size:12px;color:var(--muted);margin-top:6px">変更履歴：${hist.map((h) => `${h.date}（${esc(h.reason)}）`).join("／")}</div>` : ""}
+        <div class="setrow" style="margin-top:8px">
+          <button class="setbtn ghost" data-exitedit>変更を申請（2段階確認）</button>
+          <button class="setbtn ghost" data-exitsigner>署名者名を設定</button>
+        </div>
+      </div>`;
+      })()}
 
       <div class="card setbox">
         <div class="settitle">💾 バックアップ</div>
@@ -2340,6 +2574,63 @@ function bindEvents() {
     const ta = $(".mealinput");
     if (ta) { ta.focus(); ta.scrollIntoView({ block: "end" }); }
   });
+
+  // v4.2 増量気流・月次判定・撤退線
+  const afl = $("[data-airflow]"); if (afl) afl.addEventListener("click", () => { airflowOpen = !airflowOpen; render(); });
+  const bap = $("[data-bulkapprove]"); if (bap) bap.addEventListener("click", () => {
+    const ym = bap.dataset.bulkapprove;
+    const cfg = bulkCfg();
+    const js = cfg.judgments.map((x) => Object.assign({}, x));
+    const j = js.find((x) => x.month === ym);
+    if (!j || j.approved || j.verdict === "cruise" || j.verdict === "stop") return;
+    const delta = j.verdict === "tailwind" ? 0.5 : -0.5;
+    const coef = Object.assign({}, cfg.coef);
+    coef.c_rest = Math.round((coef.c_rest + delta) * 10) / 10;
+    coef.c_training = Math.round((coef.c_training + delta) * 10) / 10;
+    j.approved = true; j.applied_coef_delta = delta;
+    saveBulk({ coef, judgments: js });
+    render();
+  });
+  const bcs = $("[data-bulkconsult]"); if (bcs) bcs.addEventListener("click", () => {
+    const ym = bcs.dataset.bulkconsult;
+    const cfg = bulkCfg();
+    const js = cfg.judgments.map((x) => Object.assign({}, x));
+    const j = js.find((x) => x.month === ym);
+    if (!j) return;
+    const text = judgmentExportText(j);
+    j.consulted = true;
+    saveBulk({ judgments: js });
+    try { navigator.clipboard.writeText(text); } catch (e) {}
+    prompt("チーム会議チャットに貼り付けてください（コピー済み。出なければここから全選択コピー）", text);
+    render();
+  });
+  const xs = $("[data-exitsigner]"); if (xs) xs.addEventListener("click", () => {
+    const cur = bulkCfg().exit_lines.signer;
+    const v = prompt("署名者として表示する名前（データ内にのみ保存され、リポジトリには載りません）", cur === "本人" ? "" : cur);
+    if (v === null) return;
+    saveBulk({ exit_lines: Object.assign({}, bulkCfg().exit_lines, { signer: v.trim() || "本人" }) });
+    render();
+  });
+  const xe = $("[data-exitedit]"); if (xe) xe.addEventListener("click", () => {
+    const el = bulkCfg().exit_lines;
+    if (!confirm("撤退線は増量開始時の自分が封印したものです。変更にはチーム会議の決定が必要です。続けますか？（1/2）")) return;
+    const reason = prompt("変更理由（必須。チーム会議の決定内容を書いてください）", "");
+    if (reason === null || !reason.trim()) { alert("理由の入力がないため変更を中止しました。"); return; }
+    const ws = prompt("停止・中間評価ライン（kg）", String(el.weight_stop)); if (ws === null) return;
+    const wg = prompt("目標体重（kg）", String(el.weight_goal)); if (wg === null) return;
+    const fs = prompt("体脂肪率ライン（%）", String(el.fat_stop)); if (fs === null) return;
+    const dl = prompt("期限（YYYY-MM-DD）", el.deadline); if (dl === null) return;
+    const next = Object.assign({}, el, {
+      weight_stop: Number(ws) || el.weight_stop, weight_goal: Number(wg) || el.weight_goal,
+      fat_stop: Number(fs) || el.fat_stop, deadline: /^\d{4}-\d{2}-\d{2}$/.test(dl.trim()) ? dl.trim() : el.deadline,
+    });
+    if (!confirm(`確認（2/2）：${next.weight_goal}kg／中間評価${next.weight_stop}kg・${next.fat_stop}%・${next.deadline} に変更します。よろしいですか？`)) return;
+    const hist = bulkCfg().exit_history.concat({ date: toKey(logicalToday()), reason: reason.trim(),
+      before: { weight_stop: el.weight_stop, weight_goal: el.weight_goal, fat_stop: el.fat_stop, deadline: el.deadline },
+      after: { weight_stop: next.weight_stop, weight_goal: next.weight_goal, fat_stop: next.fat_stop, deadline: next.deadline } });
+    saveBulk({ exit_lines: next, exit_history: hist });
+    render();
+  });
   document.querySelectorAll("[data-liftrow]").forEach((row) => {
     let timer = null;
     const start = () => {
@@ -2375,7 +2666,7 @@ function bindEvents() {
       await callApi({ model: MODEL_TEST, max_tokens: 10, messages: [{ role: "user", content: "1+1=" }] });
       setMsg = "保存しました。AI機能が使えます。";
     } catch (e) {
-      setMsg = "保存しましたが、テストに失敗しました（" + e.message + "）。通信状況か、キーが正しいか確認してください。";
+      setMsg = "保存しましたが、テスト呼び出しが通りませんでした（" + e.message + "）。通信状況か、キーが正しいか確認してください。";
     }
     render();
   });
@@ -2389,7 +2680,7 @@ function bindEvents() {
     localStorage.setItem(GH_TOKEN_KEY, v);
     setMsg = ""; syncReady = false;
     await syncNow();
-    setMsg = syncState === "error" ? "トークンを保存しましたが同期に失敗しました。gist権限（Read and write）が付いているか確認してください。" : "同期を開始しました。";
+    setMsg = syncState === "error" ? "トークンを保存しましたが同期が通りませんでした。gist権限（Read and write）が付いているか確認してください。" : "同期を開始しました。";
     render();
   });
   const sn = $("[data-syncnow]"); if (sn) sn.addEventListener("click", () => syncNow());
