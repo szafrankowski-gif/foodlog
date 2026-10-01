@@ -1176,7 +1176,8 @@ function parseLocalInput(text) {
   if (meas) return { patch: {}, moves: [], meas: meas.meas || null, measNote: meas.note || null, wnote: meas.wnote || null };
   // 種目実績メモ（②実施ログ）：ブルガリアン等のフリーテキストはworkout.noteへ（パース不要・保存のみ）
   if (EXERCISE_MEMO_RE.test(text.trim())) return { patch: {}, moves: [], wnote: text.trim() };
-  const toks = text.split(/[、,，\s　・\/]+/).filter(Boolean);
+  // 「＋/+」も区切り扱い（「クレアチン＋水」等。食品の複合表記は全トークン解釈できず従来どおりAIへ行くので影響しない）
+  const toks = text.split(/[、,，\s　・\/＋+]+/).filter(Boolean);
   if (!toks.length) return null;
   const patch = {}, moves = [];
   for (const tok of toks) {
@@ -1188,6 +1189,10 @@ function parseLocalInput(text) {
     }
     if ((m = tok.match(/^体重(\d{2,3}(?:\.\d+)?)(?:kg|キロ)?$/))) { patch.weight = m[1]; continue; }
     if ((m = tok.match(/^睡眠(\d{1,2}(?:\.\d+)?)(?:h|時間)?$/))) { patch.sleep = m[1]; continue; }
+    // サプリ単体はAIに回さずチェックを直接ON（栄養素ゼロでAIが品目0件を返し「読み取れない」になるのを防ぐ）
+    if (/^クレアチン(?:\d{1,2}g)?$/.test(tok)) { patch.creatine = true; continue; }
+    if (/^ビタミン[DdＤ](?:\d+(?:IU|iu)?)?$/.test(tok)) { patch.vitd = true; continue; }
+    if (/^(?:水|お茶|白湯|炭酸水|ブラックコーヒー)$/.test(tok)) continue; // 栄養なしの飲み物は記録対象外として無視
     return null; // 1つでも解釈できなければ食事テキストとしてAIへ
   }
   return { patch, moves };
