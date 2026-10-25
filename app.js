@@ -454,6 +454,9 @@ const MEAS_DEF = [
     note: "更新時に随時（41→51→61）。質重視・記録がなくても正常" },
   { key: "waist", label: "腹囲", unit: "cm", sides: false, better: "none", target: null,
     note: "週1。増量の質の指標（体脂肪計の補完）。増減そのものは良し悪しにしない" },
+  { key: "chest", label: "胸囲", unit: "cm", sides: false, better: "none", target: null,
+    empty: "任意記録（「胸囲 95」で記録）",
+    note: "腹囲とセットで見る増量の質の指標（胸囲が増えて腹囲が横ばいなら上半身に乗っている）。増減そのものは良し悪しにしない" },
 ];
 // 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
 // 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース不成立はmeasNoteに保存し測定ビューで分類可能に
@@ -461,9 +464,9 @@ const MEAS_DEF = [
 const EXERCISE_MEMO_RE = /^(ブルガリアン|TGU|ＴＧＵ|(?:片脚)?RDL|膝コロ|ステップアップ|ステップダウン|ワンハンドロウ|(?:スーツケース)?(?:マーチ|ホールド)|足上げプッシュアップ|プッシュアップ)/;
 function parseMeasText(text) {
   const t = text.trim();
-  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|懸垂|ディップス|片手スイング|(?:KB)?スイング|(?:ボックス)?ジャンプ|腹囲|ブルガリアン|TGU|ＴＧＵ)/.exec(t);
+  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|懸垂|ディップス|片手スイング|(?:KB)?スイング|(?:ボックス)?ジャンプ|腹囲|胸囲|ブルガリアン|TGU|ＴＧＵ)/.exec(t);
   if (!head) return null;
-  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips", "懸垂": "pullup", "腹囲": "waist", "片手スイング": "swing1", "ブルガリアン": "bulg" }[head[1]]
+  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips", "懸垂": "pullup", "腹囲": "waist", "胸囲": "chest", "片手スイング": "swing1", "ブルガリアン": "bulg" }[head[1]]
     || (head[1].startsWith("ピストル") ? "box" : head[1].endsWith("スイング") ? "swing" : head[1].endsWith("ジャンプ") ? "jump" : /TGU|ＴＧＵ/.test(head[1]) ? "tgu" : "hang");
   const r = /右[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t), l = /左[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t);
   const nums = (t.slice(head[1].length).match(/\d{1,3}(?:\.\d+)?/g) || []).map(Number);
@@ -505,7 +508,7 @@ function parseMeasText(text) {
     if (/(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.test(t)) return { wnote: t };
     if (!nums.length) return { note: t };
     meas.swing = nums[0];
-  } else if (key === "jump" || key === "waist") {
+  } else if (key === "jump" || key === "waist" || key === "chest") {
     if (!nums.length) return { note: t };
     meas[key] = nums[0];
   } else if (key === "hang") {
