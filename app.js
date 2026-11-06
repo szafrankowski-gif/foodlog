@@ -590,6 +590,25 @@ function liftPrev(ex, beforeKey, beforeIdx) {
   }
   return prev;
 }
+// 今日のメニュー行→挙上種目の対応（挙上記録がある種目だけ前回記録を行内に出す。boxjump等はday.meas系で別管理）
+const MENU_LIFT = { bulgarian: "bulgarian", pullup: "pullup", slrdl: "rdl", swing: "swing", push: "dips" };
+// メニュー行用の前回記録1行：「前回 10/28 +16kg 6×3　目安 7×3 / +20kg」。未記録なら空＝行を出さない
+function liftPrevLine(liftId) {
+  let hit = null;
+  for (const k of Object.keys(data).sort()) {
+    const ls = (data[k] && data[k].lifts) || [];
+    for (const r of ls) if (r && r.ex === liftId) hit = { k, r };
+  }
+  if (!hit) return "";
+  // 目安＝ダブルプログレッション（同重量で回数+1、重量リストの次段があればそれも並記）
+  const parts = [];
+  if (hit.r.reps != null) parts.push(`${Number(hit.r.reps) + 1}×${hit.r.sets != null ? hit.r.sets : 1}`);
+  const def = liftMaster().find((x) => x.id === liftId);
+  const loads = (def && def.loads) || LIFT_LOADS_ALL;
+  const i = loads.indexOf(String(hit.r.load));
+  if (i >= 0 && i + 1 < loads.length) parts.push(fmtLoad(loads[i + 1]));
+  return `<div style="font-size:12.5px;margin-top:3px;line-height:1.5"><span style="color:var(--muted)">前回</span> <span class="mono" style="color:var(--text)">${esc(hit.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(hit.r.load))} ${esc(liftRepsSets(hit.r))}</span>${parts.length ? `　<span style="color:var(--muted)">目安</span> <span class="mono" style="color:var(--text)">${esc(parts.join(" / "))}</span>` : ""}</div>`;
+}
 // 前進判定：重量↑ or 同重量で回数↑ or 同重量同回数でセット↑ → up。全て同値 → keep。下回るときはnull＝何も言わない
 function judgeLift(rec, prev) {
   if (!prev) return null;
@@ -1636,6 +1655,7 @@ function renderLog() {
             <div style="flex:1;min-width:0">
               <div style="font-size:16px;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</div>
               <div style="font-size:13px;color:var(--muted);line-height:1.45" class="mono">${ex.spec}</div>
+              ${MENU_LIFT[ex.id] ? liftPrevLine(MENU_LIFT[ex.id]) : ""}
             </div>
           </div>`;
         }).join("")}
