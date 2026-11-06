@@ -554,13 +554,13 @@ function measThisWeek(anchorKey) {
 // ---------- 挙上記録（v4.1：タップ4回で1種目。②実施ログの構造化） ----------
 // day.lifts = [{ex, load, reps, sets, t}]。loadは文字列（"自重"/"KB16"/"+5"…）で数値換算はビュー側
 const LIFT_EX_KEY = "mealog:liftex"; // ユーザー追加種目（端末ローカル。データ本体はGist同期されるがマスタ追加分は端末ごと）
-const LIFT_LOADS_ALL = ["自重", "KB16", "KB24", "+5", "+8", "+12", "+16", "+20"];
+const LIFT_LOADS_ALL = ["自重", "KB16", "KB24", "+5", "+8", "+12", "+16", "+20", "+24"];
 const LIFT_DEF = [
   { id: "bulgarian", label: "ブルガリアン", loads: ["自重", "KB16", "KB24"] },
-  { id: "dips",      label: "ディップス",   loads: ["自重", "+5", "+8", "+12", "+16", "+20"] },
+  { id: "dips",      label: "ディップス",   loads: ["自重", "+5", "+8", "+12", "+16", "+20", "+24"] }, // +24=KB24を吊るす
   { id: "swing",     label: "スイング",     loads: ["KB16", "KB24"] }, // 片手は種目追加で
   { id: "rdl",       label: "RDL(片脚)",    loads: ["KB16", "KB24"] },
-  { id: "pullup",    label: "懸垂",         loads: ["自重", "+5", "+8", "+12", "+16", "+20"] },
+  { id: "pullup",    label: "懸垂",         loads: ["自重", "+5", "+8", "+12", "+16", "+20", "+24"] }, // +24=KB24を吊るす
 ];
 function liftCustom() {
   try { const a = JSON.parse(localStorage.getItem(LIFT_EX_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; }
@@ -654,13 +654,16 @@ function parseLiftText(text) {
   if (!m) return null;
   const ex = /ブルガリアン/.test(m[1]) ? "bulgarian" : /ディップス/.test(m[1]) ? "dips" : /懸垂/.test(m[1]) ? "pullup" : /RDL/.test(m[1]) ? "rdl" : "swing";
   const plus = /[+＋][\s　]*(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.exec(t);
-  const kg = plus ? null : /(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.exec(t);
+  // 「KB24」表記も重量として受ける（吊るす種目では+N換算）。種目名の"KBスイング"のKBは数字が続かないので誤爆しない
+  const kb = plus ? null : /KB[\s　]*(\d{1,3}(?:\.\d+)?)/i.exec(t);
+  const kg = plus || kb ? null : /(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.exec(t);
   const load = plus ? "+" + Number(plus[1])
+    : kb ? ((ex === "dips" || ex === "pullup") ? "+" + Number(kb[1]) : "KB" + Number(kb[1]))
     : kg ? ((ex === "dips" || ex === "pullup") ? "+" + Number(kg[1]) : "KB" + Number(kg[1]))
     : ((ex === "dips" || ex === "pullup" || ex === "bulgarian") ? "自重" : null);
   if (!load) return null; // スイング・RDLは重量表記が無ければ挙上レコード化しない（連続回数測定・メモは従来経路で保存済み）
   let reps = null, sets = null;
-  const xs = /(\d{1,3})[\s　]*[×xX][\s　]*(\d{1,2})/.exec(t.replace(plus ? plus[0] : (kg ? kg[0] : ""), ""));
+  const xs = /(\d{1,3})[\s　]*[×xX][\s　]*(\d{1,2})/.exec(t.replace(plus ? plus[0] : kb ? kb[0] : (kg ? kg[0] : ""), ""));
   const r = /右[\s　]*(\d{1,3})/.exec(t), l = /左[\s　]*(\d{1,3})/.exec(t);
   if (xs) { reps = Number(xs[1]); sets = Number(xs[2]); }
   else if (r || l) reps = Math.min(...[r, l].filter(Boolean).map((v) => Number(v[1]))); // 左右差があれば小さい方を採用
