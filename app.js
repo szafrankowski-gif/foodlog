@@ -1728,6 +1728,27 @@ function renderLog() {
       if (exDef && liftLoad != null && !loads.includes(liftLoad)) loads.push(liftLoad);
       const repsList = [...new Set([3, 5, 6, 8, 10, 12].concat(liftReps != null ? [Number(liftReps)] : []))].sort((a, b) => a - b);
       const setsList = [...new Set([2, 3, 5].concat(liftSets != null ? [Number(liftSets)] : []))].sort((a, b) => a - b);
+      // 前回記録の明示表示（日付つき）。プリセットの中身を見える化し「今日は何を超えるか」をその場で確認できるように
+      const prevInfo = (() => {
+        if (!exDef) return null;
+        let hit = null;
+        for (const k of Object.keys(data).sort()) {
+          const ls = (data[k] && data[k].lifts) || [];
+          for (const r of ls) if (r && r.ex === liftEx) hit = { k, r };
+        }
+        return hit;
+      })();
+      // 前進の目安＝ダブルプログレッション（同重量で回数+1 → 次の重量へ）。疲労日に下げるのも正しい調整（v3.3）
+      const nextHint = (() => {
+        if (!prevInfo || !exDef) return "";
+        const r = prevInfo.r;
+        const parts = [];
+        if (r.reps != null) parts.push(`${Number(r.reps) + 1}×${r.sets != null ? r.sets : 1}`);
+        const ls = exDef.loads || LIFT_LOADS_ALL;
+        const i = ls.indexOf(String(r.load));
+        if (i >= 0 && i + 1 < ls.length) parts.push(fmtLoad(ls[i + 1]));
+        return parts.length ? `　·　前進の目安 <span class="mono">${esc(parts.join(" / "))}</span>` : "";
+      })();
       return `
     <div class="section" style="padding-top:10px;padding-bottom:0">
       <div class="card" style="padding:10px 14px 12px">
@@ -1742,6 +1763,9 @@ function renderLog() {
           <button class="chip" data-liftadd>＋…</button>
         </div>
         ${exDef ? `
+        <div style="font-size:12.5px;color:var(--muted);padding:7px 2px 0;line-height:1.7">${prevInfo
+          ? `前回：<span class="mono" style="color:var(--text)">${esc(prevInfo.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(prevInfo.r.load))} ${esc(liftRepsSets(prevInfo.r))}</span>（選択済み）${nextHint}<br>疲労が残る日は一段軽くするのも正しい調整です`
+          : "この種目は初記録です"}</div>
         <div class="movechips" style="padding:6px 0 0">
           <span class="mclabel">重さ</span>
           ${loads.map((l) => `<button class="chip ${liftLoad === l ? "on" : ""}" data-liftload="${esc(l)}">${esc(fmtLoad(l))}</button>`).join("")}
