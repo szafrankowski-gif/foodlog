@@ -2181,6 +2181,11 @@ function renderReview() {
       <div class="chartnote">緑の破線＝基準${HG.pBase}g／橙線＝筋トレ・高強度日${HG.pTrain}g</div>
     </div>
     <div class="chartbox">
+      <div class="seclabel">🍚 糖質の推移</div>
+      ${carbChart(days, HG)}
+      <div class="chartnote">緑の破線＝休養日下限${HG.cRest}g／橙線＝筋トレ・高強度日下限${HG.cTrain}g（下限管理・上限なし）</div>
+    </div>
+    <div class="chartbox">
       <div class="seclabel">⚖️ 体重の推移</div>
       ${weightChart(days)}
     </div>
@@ -2237,6 +2242,36 @@ function proteinChart(days, HG) {
     ${grid}${axis}${bars}
     <line x1="${padL}" x2="${W}" y1="${y(HG.pBase).toFixed(1)}" y2="${y(HG.pBase).toFixed(1)}" stroke="#7FD68B" stroke-width="1.5" stroke-dasharray="4 3"/>
     <line x1="${padL}" x2="${W}" y1="${y(HG.pTrain).toFixed(1)}" y2="${y(HG.pTrain).toFixed(1)}" stroke="#F0B458" stroke-width="1.5"/>
+    ${labels}
+  </svg>`;
+}
+
+// 糖質はv3.1以来の下限管理：その日の実績区分（筋トレ・高強度日かどうか）ごとの下限に届いた日を緑にする。上限の概念はない
+function carbChart(days, HG) {
+  const W = 448, H = 180, padL = 34, padB = 18, padT = 8;
+  const maxY = Math.max(HG.cTrain + 40, ...days.map((d) => d.has ? d.c : 0));
+  const iw = (W - padL) / days.length;
+  const y = (v) => padT + (H - padT - padB) * (1 - Math.min(v, maxY) / maxY);
+  const bars = days.map((d, i) => {
+    const x = padL + i * iw + iw * 0.15;
+    const bw = iw * 0.7;
+    const v = d.has ? d.c : 0;
+    const floor = d.active ? HG.cTrain : HG.cRest;
+    const color = v >= floor ? "#7FD68B" : v > 0 ? "#5FC9DE" : "#22303C";
+    const h = (H - padT - padB) * (Math.min(v, maxY) / maxY);
+    return `<rect x="${x.toFixed(1)}" y="${(H - padB - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="2" fill="${color}"/>`;
+  }).join("");
+  const step = days.length > 20 ? 5 : days.length > 10 ? 2 : 1;
+  const labels = days.map((d, i) => i % step === 0
+    ? `<text x="${(padL + i * iw + (i === 0 ? 0 : iw/2)).toFixed(1)}" y="${H-4}" font-size="13" fill="#8598A6" text-anchor="${i === 0 ? "start" : "middle"}">${d.label}</text>` : "").join("");
+  const axis = [0, 100, 200, maxY].map((v) =>
+    `<text x="${padL-5}" y="${(y(v)+3).toFixed(1)}" font-size="13" fill="#8598A6" text-anchor="end">${v}</text>`).join("");
+  const grid = [100, 200].map((v) =>
+    `<line x1="${padL}" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#2E3E4C" stroke-width=".6" opacity=".8"/>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px">
+    ${grid}${axis}${bars}
+    <line x1="${padL}" x2="${W}" y1="${y(HG.cRest).toFixed(1)}" y2="${y(HG.cRest).toFixed(1)}" stroke="#7FD68B" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <line x1="${padL}" x2="${W}" y1="${y(HG.cTrain).toFixed(1)}" y2="${y(HG.cTrain).toFixed(1)}" stroke="#F0B458" stroke-width="1.5"/>
     ${labels}
   </svg>`;
 }
