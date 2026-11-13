@@ -287,20 +287,29 @@ function updateDayQuiet(key, patch) {
   save();
 }
 // 直近のユーザー操作時刻。操作の直後に自動再描画を重ねるとタップ・フォーカスが飛ぶので、自動renderはこの値で待機判断する
-let lastInteract = 0;
-document.addEventListener("pointerdown", () => { lastInteract = Date.now(); }, true);
+let lastInteract = 0, pointerIsDown = false, lastScrollAt = 0;
+document.addEventListener("pointerdown", () => { lastInteract = Date.now(); pointerIsDown = true; }, true);
+document.addEventListener("pointerup", () => { lastInteract = Date.now(); pointerIsDown = false; }, true);
+document.addEventListener("pointercancel", () => { pointerIsDown = false; }, true);
 document.addEventListener("keydown", () => { lastInteract = Date.now(); }, true);
+document.addEventListener("scroll", () => { lastScrollAt = Date.now(); }, true);
+// ジェスチャ（指が触れている・スクロール慣性中）の最中はDOMを差し替えない：iOSはタッチ中の差し替えでタッチ状態が壊れて固まったように見える
+const gestureActive = () => pointerIsDown || Date.now() - lastScrollAt < 300;
 let renderSoonTimer = null;
 // 連続タップ中の再描画を1回にまとめる（見た目は呼び出し側がその場で更新済み）
 function renderSoon(ms) {
   clearTimeout(renderSoonTimer);
-  renderSoonTimer = setTimeout(() => { renderSoonTimer = null; render(); }, ms == null ? 700 : ms);
+  renderSoonTimer = setTimeout(() => {
+    renderSoonTimer = null;
+    if (gestureActive()) { renderSoon(300); return; }
+    render();
+  }, ms == null ? 700 : ms);
 }
 // 同期完了など「操作起点でない」再描画は、入力・タップの合間まで待つ（操作中のDOM総入れ替え＝タップ無効・キーボード消失を防ぐ）
 function renderWhenIdle() {
   const ae = document.activeElement;
   const typing = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
-  if (!typing && !busy && Date.now() - lastInteract > 2500) { render(); return; }
+  if (!typing && !busy && !gestureActive() && Date.now() - lastInteract > 2500) { render(); return; }
   setTimeout(renderWhenIdle, 1200);
 }
 function apiKey() { return localStorage.getItem(API_KEY_KEY) || ""; }
