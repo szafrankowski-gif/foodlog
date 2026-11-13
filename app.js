@@ -37,7 +37,7 @@ const ACTS = ["trainA", "trainB", "climb", "jiujitsu", "mountain", "aerobic"];
 const STEP_NOTE_MIN = 15000;
 const dayActs = (dd) => (dd && dd.acts) || [];
 const checkedCount = (dd) => ((((dd || {}).workout) || {}).checks || []).length;
-// トグル自体が実績となる身体活動（＝運動日・翌朝の手首チェック対象）：登攀・柔術・山行
+// トグル自体が実績となる身体活動（＝運動日）：登攀・柔術・山行
 const isPhysicalAct = (a) => a === "climb" || a === "jiujitsu" || a === "mountain";
 // 有酸素(aerobic)は設計上、運動日判定に影響しない（糖質レバーに触らない純粋な実績記録）
 const isActiveDay = (dd) =>
@@ -55,8 +55,6 @@ function weeklyAerobic(anchorKey) {
 }
 const actLabel = (dd) => dayActs(dd).length ? dayActs(dd).map((a) => DAY_LABEL[a]).join("+") : "休養";
 const actShort = (dd) => dayActs(dd).map((a) => DAY_SHORT[a] || "").join("");
-// 翌朝の手首チェックを出す前日の実績：筋トレ(MENUあり=trainA/B)に加え、登攀・柔術・山行も対象
-const wristTrig = (dd) => dayActs(dd).some((a) => MENU[a] || isPhysicalAct(a));
 
 // ---- サプリ確認（優先度高：クレアチン・ビタミンD）----
 // クレアチンは食事記録に「クレアチン」が含まれていれば自動でチェック扱い。タイルのタップで手動上書き可。
@@ -1002,7 +1000,7 @@ async function fetchBakao(key) {
 
 目標（v4.2 体重連動式：係数×体重7日平均で週1自動更新）：たんぱく質は基準${G.pBase}g（毎日必達）、筋トレ日・高強度日は${G.pTrain}gを目標にする（上限ではなく、超えても全く問題ない）。糖質は下限管理：休養日${G.cRest}g・筋トレ/高強度日${G.cTrain}gを下回らないことが目標で、上限は設けない（血糖対策は玄米優先・食後散歩・ドカ食い回避という質とタイミングで行い、総量は絞らない）。筋トレ日はトレ後2時間以内に糖質40〜60gの補給が目安（達成していたら軽く肯定してよい）。P残・C下限残があるときは、具体的な食品での埋め方をひとつ示す（例：おにぎり1個で糖質+40g、プロテイン1杯でP+20g）。増量ペースの良し悪し（速い・遅い等）の裁定は月次判定エンジンの担当なので、日々の評価では体重の増減ペースを判定・論評しない。
 
-筋トレ設計：週2必須・最優先。自宅装備（KB16/24kg・プライオボックス・懸垂バー・ディップススタンド等）でA（脚＋引き）/B（登山脚＋押し・ロウ）の週2。片脚系・下半身優先（柔術・山・ドラツーの3ゴールとも下半身が律速）。加えてドライツーリング週1＋柔術復帰ドリル週1-2。懸垂は少なめの設定（2-3セット）が正しい状態で、増やすことを促さない（プルはドラツーが担う）。KBスイングはフォーム優先。「速度が落ちたら終了」を支持し回数増を煽らない。Zone2有酸素は週${GOALS.zone2Max}分上限（増量優先）。上限を上回っているときは回復を推す。グリップは強化対象（目標${GOALS.grip}kg）。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレA翌日は殿筋・ハム、B翌日は胸・肩・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・懸垂・ディップス・ハング・膝壁・腹囲）の向上は増量の進捗として肯定的に扱う。ただし腹囲が体重より明らかに速く増える傾向が続く場合のみ、体脂肪率の確認を軽く促す（減量提案はしない）。本人の記述に中止サイン（鼠径部の痛み・肘内側の一点痛・腰からのしびれ等）があれば、その種目の中止・変更と、続く場合の医療機関相談を勧める。体重が${GOALS.midReview}kgに到達している場合、中間評価（パフォーマンス再評価）のタイミングであることに一度だけ軽く触れてよい（毎回繰り返さない）。翌朝の手首に違和感が出たら一段戻すルール。
+筋トレ設計：週2必須・最優先。自宅装備（KB16/24kg・プライオボックス・懸垂バー・ディップススタンド等）でA（脚＋引き）/B（登山脚＋押し・ロウ）の週2。片脚系・下半身優先（柔術・山・ドラツーの3ゴールとも下半身が律速）。加えてドライツーリング週1＋柔術復帰ドリル週1-2。懸垂は少なめの設定（2-3セット）が正しい状態で、増やすことを促さない（プルはドラツーが担う）。KBスイングはフォーム優先。「速度が落ちたら終了」を支持し回数増を煽らない。Zone2有酸素は週${GOALS.zone2Max}分上限（増量優先）。上限を上回っているときは回復を推す。グリップは強化対象（目標${GOALS.grip}kg）。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレA翌日は殿筋・ハム、B翌日は胸・肩・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・懸垂・ディップス・ハング・膝壁・腹囲）の向上は増量の進捗として肯定的に扱う。ただし腹囲が体重より明らかに速く増える傾向が続く場合のみ、体脂肪率の確認を軽く促す（減量提案はしない）。本人の記述に中止サイン（鼠径部の痛み・肘内側の一点痛・腰からのしびれ等）があれば、その種目の中止・変更と、続く場合の医療機関相談を勧める。体重が${GOALS.midReview}kgに到達している場合、中間評価（パフォーマンス再評価）のタイミングであることに一度だけ軽く触れてよい（毎回繰り返さない）。
 
 実施調整の前提（v3.3）：ブルガリアンスクワットは16kgに調整済みで、これは正しい調整（「後退」と表現しない）。「フォームが崩れたら下げる／脚の疲労だけなら維持」の判断基準を支持する。ディップスはナロー加重が主役で、加重の進捗（+5→+8→KB16kg吊り）は増量の成果として肯定する。上半身は想定より強く、下半身が伸びしろ——という非対称プロフィールを前提に話す。TGUは任意の習得枠（実施記録があれば軽く肯定、未実施でも触れない）。装備の購入は完了済み（KB16/24kg・プライオボックス・ディップスベルト・バンド4本等）で、追加購入の相談には原則「不要」と答える。唯一の例外：片手スイング24kgで左右8回×5セットを質を保って完遂したら、32kg KBの購入条件達成として一度だけ案内してよい。ドラツー当日または翌日は、最弱バンドでの肩外旋・前腕伸筋ケア5分を軽く勧めてよい。
 
@@ -1633,23 +1631,6 @@ function renderLog() {
     ${(() => {
       const rem = PACE.filter((row) => pc[row.key] < row.target).map((row) => `${row.label.split("・")[0]}あと${row.target - pc[row.key]}`);
       return `<button class="pacesum ${rem.length ? "" : "done"}" data-pacejump><span class="txt">${rem.length ? `今週の残り：${rem.join("・")}` : "今週の食材 ✓"}</span><span class="more">詳細 ›</span></button>`;
-    })()}
-
-    ${(() => {
-      const yd = new Date(cursor); yd.setDate(yd.getDate() - 1);
-      const ydd = data[toKey(yd)];
-      if (!ydd || !wristTrig(ydd)) return "";
-      return `<div class="section" style="padding-top:0;padding-bottom:14px">
-        <div class="card" style="padding:12px 14px;border-color:${day.wrist==="ng"?"var(--amber)":"var(--line)"}">
-          <div style="font-size:14px;color:var(--muted);margin-bottom:8px">昨日は${actLabel(ydd)}。翌朝の手首は？</div>
-          <div style="display:flex;gap:8px">
-            <button class="dt ${day.wrist==="ok"?"rest on":"rest"}" data-wrist="ok" style="padding:8px 0">違和感なし</button>
-            <button class="dt ${day.wrist==="ng"?"active on":"active"}" data-wrist="ng" style="padding:8px 0">違和感あり</button>
-          </div>
-          ${day.wrist==="ng"?`<div style="font-size:13px;color:var(--amber);margin-top:8px">判断基準：一段戻す（重量↓ or テンポ段階↓）。2回続いたら2割減。</div>`:""}
-          ${day.wrist==="ok"?`<div style="font-size:13px;color:var(--green);margin-top:8px">前進OK。テンポ→ポーズ→片側化→回数の順で。</div>`:""}
-        </div>
-      </div>`;
     })()}
 
     ${(isToday && day.foods.length === 0 && (day.sleep == null || day.weight == null)) ? `
@@ -2445,7 +2426,7 @@ function renderSettings() {
           foodlog v2 — たんぱく質 基準100g／運動日目標120g方式の食事＋筋トレログ。<br>
           <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・柔術・山行）から自動判定。有酸素（Zone2）トグルは週次実績の記録のみで糖質目標には影響しない（Fitbit等のワークアウト画面スクショを📊に読ませると自動ON）。<br>
           歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
-          筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）。翌朝の手首で前進/一段戻すを判定。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
+          筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
           糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
           データ保存：この端末＋（同期設定時）あなたのGitHub秘密Gist。Anthropic・GitHub以外の外部には何も送信しません。
         </div>
@@ -2646,12 +2627,6 @@ function bindEvents() {
       updateDay(key, { workout: Object.assign({ checks: [] }, day.workout || {}, { note: wn.value }) });
     });
   }
-  document.querySelectorAll("[data-wrist]").forEach((b) =>
-    b.addEventListener("click", () => {
-      const key = toKey(cursor);
-      const cur = getDay(key).wrist;
-      updateDay(key, { wrist: cur === b.dataset.wrist ? null : b.dataset.wrist });
-    }));
 
   // v4.1 挙上タップ入力：種目選択で前回値をプリセット（前回と同じなら種目→記録の2タップで完了）
   document.querySelectorAll("[data-liftex]").forEach((b) =>
