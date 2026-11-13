@@ -280,9 +280,30 @@ function save() {
   schedulePush();
 }
 function updateDay(key, patch) {
+  updateDayQuiet(key, patch);
+  render();
+}
+// 書き込みのみ（描画は呼び出し側が間引く）。連続タップのたびに全再描画するとDOM差し替え中のタップが無効になるため
+function updateDayQuiet(key, patch) {
   data[key] = Object.assign({}, getDay(key), patch, { _m: Date.now() });
   save();
-  render();
+}
+// 直近のユーザー操作時刻。操作の直後に自動再描画を重ねるとタップ・フォーカスが飛ぶので、自動renderはこの値で待機判断する
+let lastInteract = 0;
+document.addEventListener("pointerdown", () => { lastInteract = Date.now(); }, true);
+document.addEventListener("keydown", () => { lastInteract = Date.now(); }, true);
+let renderSoonTimer = null;
+// 連続タップ中の再描画を1回にまとめる（見た目は呼び出し側がその場で更新済み）
+function renderSoon(ms) {
+  clearTimeout(renderSoonTimer);
+  renderSoonTimer = setTimeout(() => { renderSoonTimer = null; render(); }, ms == null ? 700 : ms);
+}
+// 同期完了など「操作起点でない」再描画は、入力・タップの合間まで待つ（操作中のDOM総入れ替え＝タップ無効・キーボード消失を防ぐ）
+function renderWhenIdle() {
+  const ae = document.activeElement;
+  const typing = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
+  if (!typing && !busy && Date.now() - lastInteract > 2500) { render(); return; }
+  setTimeout(renderWhenIdle, 1200);
 }
 function apiKey() { return localStorage.getItem(API_KEY_KEY) || ""; }
 
@@ -363,7 +384,7 @@ function schedulePush() {
   pushTimer = setTimeout(async () => {
     try { syncState = "busy"; await syncPush(); syncState = "ok"; }
     catch (e) { syncState = "error"; }
-    if (view === "settings") render();
+    if (view === "settings") renderWhenIdle(); // 設定画面の入力中にフォーカスを奪わない
   }, 2500);
 }
 
@@ -2583,8 +2604,10 @@ function bindEvents() {
       const key = toKey(cursor);
       const day = getDay(key);
       const which = b.dataset.supp;
-      if (which === "creatine") updateDay(key, { creatine: !creatineOn(day) });
-      else updateDay(key, { vitd: !vitdOn(day) });
+      if (which === "creatine") updateDayQuiet(key, { creatine: !creatineOn(day) });
+      else updateDayQuiet(key, { vitd: !vitdOn(day) });
+      b.classList.toggle("on");
+      renderSoon();
     }));
   const mdel = $("[data-measdel]"); if (mdel) mdel.addEventListener("click", () => {
     if (confirm("この日の測定データ（体重・筋量・体脂肪・睡眠・就寝起床・心拍・歩数）を削除しますか？食事や運動の記録は残ります。")) {
@@ -2597,8 +2620,19 @@ function bindEvents() {
       const day = getDay(key);
       const w = Object.assign({ checks: [], note: "" }, day.workout || {});
       const id = row.dataset.ex;
-      w.checks = w.checks.includes(id) ? w.checks.filter((x) => x !== id) : w.checks.concat(id);
-      updateDay(key, { workout: w });
+      const on = !w.checks.includes(id);
+      w.checks = on ? w.checks.concat(id) : w.checks.filter((x) => x !== id);
+      updateDayQuiet(key, { workout: w });
+      // 行とカウンタはその場で更新。実績判定・ゲージなど依存表示は手が止まってから反映（renderSoon）
+      const box = row.querySelector(".box"); if (box) { box.classList.toggle("on", on); box.textContent = on ? "✓" : ""; }
+      const nm = row.querySelector("div div"); if (nm) nm.style.color = on ? "var(--text)" : "var(--muted)";
+      const pb = row.closest(".pacebox"), sec = row.closest(".section");
+      if (pb && sec) {
+        const doneN = pb.querySelectorAll(".box.on").length, total = pb.querySelectorAll(".pacerow").length;
+        const fs = sec.querySelector(".foldsum");
+        if (fs) { fs.textContent = `${doneN}/${total}`; fs.style.color = doneN === total ? "var(--green)" : "var(--muted)"; }
+      }
+      renderSoon();
     }));
   const md = $("[data-mood]"); if (md) {
     md.addEventListener("change", () => {
@@ -2632,12 +2666,16 @@ function bindEvents() {
       liftSets = prev ? (prev.sets == null ? 3 : Number(prev.sets)) : 3;
       render();
     }));
+  // 重さ・回数・セットの選択は再描画せずclassの付け替えだけ（連続タップでの取りこぼしをなくす。状態変数は記録時に参照）
   document.querySelectorAll("[data-liftload]").forEach((b) =>
-    b.addEventListener("click", () => { liftLoad = b.dataset.liftload; render(); }));
+    b.addEventListener("click", () => { liftLoad = b.dataset.liftload;
+      document.querySelectorAll("[data-liftload]").forEach((x) => x.classList.toggle("on", x === b)); }));
   document.querySelectorAll("[data-liftreps]").forEach((b) =>
-    b.addEventListener("click", () => { liftReps = Number(b.dataset.liftreps); render(); }));
+    b.addEventListener("click", () => { liftReps = Number(b.dataset.liftreps);
+      document.querySelectorAll("[data-liftreps]").forEach((x) => x.classList.toggle("on", x === b)); }));
   document.querySelectorAll("[data-liftsets]").forEach((b) =>
-    b.addEventListener("click", () => { liftSets = Number(b.dataset.liftsets); render(); }));
+    b.addEventListener("click", () => { liftSets = Number(b.dataset.liftsets);
+      document.querySelectorAll("[data-liftsets]").forEach((x) => x.classList.toggle("on", x === b)); }));
   const la = $("[data-liftadd]"); if (la) la.addEventListener("click", () => {
     const name = prompt("追加する種目名（例：片手スイング）");
     if (!name || !name.trim()) return;
@@ -2824,7 +2862,7 @@ if (ghToken()) {
     try { syncState = "busy"; await syncPull(); syncState = "ok"; }
     catch (e) { syncState = "error"; }
     syncReady = true;
-    render();
+    renderWhenIdle(); // 起動直後の操作中にDOMを差し替えない（操作の合間に反映）
     schedulePush();
   })();
 }
