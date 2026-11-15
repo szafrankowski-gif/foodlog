@@ -655,7 +655,7 @@ const LIFT_DEF = [
   { id: "latpull",   label: "ラットプル",       gym: true, loads: gymLoads("段", 1, 14, 1) },
   { id: "pulleyrow", label: "プーリーロウ",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
   { id: "machcurl",  label: "マシンカール",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
-  { id: "situp",     label: "シットアップ",     gym: true, loads: gymLoads("段", 1, 14, 1) },
+  { id: "situp",     label: "シットアップ",     gym: true, loads: gymLoads("kg", 5, 80, 5) }, // 負荷はkg指定（用紙の例：70）
   // ジムB 脚＋肩＋三頭
   { id: "legpress",  label: "レッグプレス",     gym: true, loads: gymLoads("枚", 1, 14, 1) },
   { id: "legcurl",   label: "レッグカール",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
