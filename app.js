@@ -696,11 +696,16 @@ function loadRank(load) {
 }
 const fmtLoad = (l) => { const s = String(l ?? ""); return /^[+＋]\d/.test(s) ? s + "kg" : s; };
 const liftRepsSets = (r) => r.reps == null ? "" : r.sets != null ? `${r.reps}×${r.sets}` : `${r.reps}回`; // 回数なし（用紙読取で重量のみ）の表示にも耐える
-// 同じ日の同一種目は1件＝手入力は上書き（同じ種目を1日に複数回やらない運用）。無ければ末尾に追加
+// 同じ日の同一種目は1件＝手入力は上書き（同じ種目を1日に複数回やらない運用）。無ければ末尾に追加。
+// 上書き対応前に積まれた同一種目の重複行も、このときまとめて1件に畳む
 function upsertLift(lifts, rec) {
-  const a = (lifts || []).slice();
-  const i = a.findIndex((r) => r && r.ex === rec.ex);
-  if (i >= 0) a[i] = rec; else a.push(rec);
+  const a = [];
+  let placed = false;
+  for (const r of lifts || []) {
+    if (r && r.ex === rec.ex) { if (!placed) { a.push(rec); placed = true; } continue; }
+    a.push(r);
+  }
+  if (!placed) a.push(rec);
   return a;
 }
 // 同種目の直前レコード（beforeKey/beforeIdxを渡すとその記録より前だけを見る。省略で全期間の最新＝プリセット用）
