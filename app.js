@@ -1932,7 +1932,7 @@ function renderLog() {
       const loads = exDef ? (exDef.loads || LIFT_LOADS_ALL).slice() : [];
       if (exDef && liftLoad != null && !loads.includes(liftLoad)) loads.push(liftLoad);
       const repsList = [...new Set([3, 5, 6, 8, 10, 12].concat(liftReps != null ? [Number(liftReps)] : []))].sort((a, b) => a - b);
-      const setsList = [...new Set([2, 3, 5].concat(liftSets != null ? [Number(liftSets)] : []))].sort((a, b) => a - b);
+      const setsList = [...new Set([1, 2, 3, 5].concat(liftSets != null ? [Number(liftSets)] : []))].sort((a, b) => a - b); // 1＝最終セットのみ記録（ジム運用）
       // 前回記録の明示表示（日付つき）。プリセットの中身を見える化し「今日は何を超えるか」をその場で確認できるように
       const prevInfo = (() => {
         if (!exDef) return null;
@@ -2818,8 +2818,10 @@ function bindEvents() {
       const prev = liftPrev(id, null, null);
       const def = liftMaster().find((e) => e.id === id) || {};
       liftLoad = prev ? prev.load : ((def.loads && def.loads[0]) || "自重");
-      liftReps = prev ? Number(prev.reps) : 5;
-      liftSets = prev ? (prev.sets == null ? 3 : Number(prev.sets)) : 3;
+      liftReps = prev && prev.reps != null ? Number(prev.reps) : 5;
+      // ジム種目は最終セットのみ記録＝既定1。前回がセット数なし（用紙読取）の場合も同じ扱い
+      const defSets = def.gym ? 1 : 3;
+      liftSets = prev ? (prev.sets == null ? defSets : Number(prev.sets)) : defSets;
       render();
     }));
   // 重さ・回数・セットの選択は再描画せずclassの付け替えだけ（連続タップでの取りこぼしをなくす。状態変数は記録時に参照）
