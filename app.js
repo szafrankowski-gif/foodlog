@@ -696,6 +696,13 @@ function loadRank(load) {
 }
 const fmtLoad = (l) => { const s = String(l ?? ""); return /^[+＋]\d/.test(s) ? s + "kg" : s; };
 const liftRepsSets = (r) => r.reps == null ? "" : r.sets != null ? `${r.reps}×${r.sets}` : `${r.reps}回`; // 回数なし（用紙読取で重量のみ）の表示にも耐える
+// 同じ日の同一種目は1件＝手入力は上書き（同じ種目を1日に複数回やらない運用）。無ければ末尾に追加
+function upsertLift(lifts, rec) {
+  const a = (lifts || []).slice();
+  const i = a.findIndex((r) => r && r.ex === rec.ex);
+  if (i >= 0) a[i] = rec; else a.push(rec);
+  return a;
+}
 // 同種目の直前レコード（beforeKey/beforeIdxを渡すとその記録より前だけを見る。省略で全期間の最新＝プリセット用）
 function liftPrev(ex, beforeKey, beforeIdx) {
   let prev = null;
@@ -1421,6 +1428,18 @@ async function submitText() {
   const t = inputText.trim();
   if (!t || busy) return;
   const local = parseLocalInput(t);
+  // 挙上として読めるテキストはAIに回さずローカル確定（v5.2でKBデッド等、測定系の入口に無い種目が増えたため独立の受け口を用意）
+  if (!local) {
+    const lift = parseLiftText(t);
+    if (lift) {
+      const key = toKey(cursor);
+      const day = getDay(key);
+      const stamp = toKey(logicalToday()) === key ? new Date().toTimeString().slice(0, 5) : null;
+      inputText = ""; errMsg = "";
+      updateDay(key, { lifts: upsertLift(day.lifts, Object.assign({}, lift, { t: stamp })) });
+      return;
+    }
+  }
   if (local) {
     const key = toKey(cursor);
     const day = getDay(key);
@@ -1434,7 +1453,7 @@ async function submitText() {
       { note: ((day.workout && day.workout.note) ? day.workout.note + "／" : "") + local.wnote });
     // v4.1 §3-1：挙上として読めるテキストは day.lifts にも正規化して同居させる（測定・メモの保存はそのまま）
     const lift = parseLiftText(t);
-    if (lift) patch.lifts = (day.lifts || []).concat([Object.assign({}, lift, { t: stamp })]);
+    if (lift) patch.lifts = upsertLift(day.lifts, Object.assign({}, lift, { t: stamp })); // 同じ日の同一種目は上書き
     updateDay(key, patch);
     return;
   }
@@ -2850,7 +2869,7 @@ function bindEvents() {
     // 時刻は今日なら現在時刻、過去日はnull（原則8：時刻を捏造しない）
     const stamp = toKey(logicalToday()) === key ? new Date().toTimeString().slice(0, 5) : null;
     const rec = { ex: liftEx, load: liftLoad, reps: Number(liftReps), sets: Number(liftSets), t: stamp };
-    const patch = { lifts: (day.lifts || []).concat([rec]) };
+    const patch = { lifts: upsertLift(day.lifts, rec) }; // 同じ日の同一種目は上書き
     const mp = liftMeasPatch(rec); // §4：懸垂・ディップスは測定系列にも反映（二重入力を要求しない）
     if (mp) patch.meas = Object.assign({}, day.meas || {}, mp);
     liftEx = liftLoad = liftReps = liftSets = null;
