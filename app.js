@@ -26,14 +26,20 @@ const MODEL_PHOTO    = "claude-sonnet-4-6";          // 写真解析：認識精
 const MODEL_BAKAO    = "claude-sonnet-4-6";          // ばかお評価：文章の質重視
 const MODEL_TEST     = MODEL_ESTIMATE;               // キー保存時のテスト用（最安）
 
-const DAY_LABEL = { rest: "休養", trainA: "筋トレA", trainB: "筋トレB", climb: "登攀", jiujitsu: "柔術", mountain: "山行", aerobic: "有酸素" };
-const DAY_SHORT = { trainA: "筋A", trainB: "筋B", climb: "登", jiujitsu: "柔", mountain: "山", aerobic: "有" };
+const DAY_LABEL = { rest: "休養", trainGymA: "ジムA", trainGymB: "ジムB", homeA: "自宅A", homeB: "自宅B", homeC: "自宅C",
+  trainA: "筋トレA", trainB: "筋トレB", climb: "登攀", jiujitsu: "柔術", mountain: "山行", aerobic: "有酸素" };
+const DAY_SHORT = { trainGymA: "ジA", trainGymB: "ジB", homeA: "宅A", homeB: "宅B", homeC: "宅C",
+  trainA: "筋A", trainB: "筋B", climb: "登", jiujitsu: "柔", mountain: "山", aerobic: "有" };
 
 // ---- v2: 実績ベース判定 ----
 // dayTypeの「宣言」を廃止。その日の実績（筋トレチェック・登攀・柔術・山行）から運動日/休養日を自動判定する。
 // 筋トレ(A/B)は「1種目以上チェック」で初めて実績＝運動日。登攀・柔術・山行はトグル自体が実績。
 // 歩数は参考表示のみ（目標や警告に使わない）。休養日で15,000歩超の日だけ一行提案を出す（目標値は変えない）。
-const ACTS = ["trainA", "trainB", "climb", "jiujitsu", "mountain", "aerobic"];
+// v5.2：トグルUIは新体系のみ。旧trainA/trainBは過去データ互換のため各判定・表示ロジックには残す（非表示でも実績として機能する）
+const ACTS = ["trainGymA", "trainGymB", "homeA", "homeB", "homeC", "climb", "jiujitsu", "mountain", "aerobic"];
+// 筋トレ系acts（メニューを持ち「1種目以上チェック」で筋トレ日になるもの）
+const TRAIN_ACTS = ["trainA", "trainB", "trainGymA", "trainGymB", "homeA", "homeB", "homeC"];
+const isTrainAct = (a) => TRAIN_ACTS.includes(a);
 const STEP_NOTE_MIN = 15000;
 const dayActs = (dd) => (dd && dd.acts) || [];
 const checkedCount = (dd) => ((((dd || {}).workout) || {}).checks || []).length;
@@ -42,7 +48,7 @@ const isPhysicalAct = (a) => a === "climb" || a === "jiujitsu" || a === "mountai
 // 有酸素(aerobic)は設計上、運動日判定に影響しない（糖質レバーに触らない純粋な実績記録）
 const isActiveDay = (dd) =>
   dayActs(dd).some(isPhysicalAct) ||
-  (dayActs(dd).some((a) => a === "trainA" || a === "trainB") && checkedCount(dd) > 0);
+  (dayActs(dd).some(isTrainAct) && checkedCount(dd) > 0);
 // 今週（月曜始まり）の有酸素実施回数
 function weeklyAerobic(anchorKey) {
   const w = weekInfo(anchorKey);
@@ -69,20 +75,20 @@ const fmt1 = (v) => (v == null || v === "" || isNaN(Number(v))) ? (v ?? "") : Nu
 function carbBarColor(carbs, floor) {
   return carbs >= floor ? "var(--green)" : carbs > 0 ? "var(--ice)" : "var(--muted)";
 }
-// 日区分：筋トレ日（trainA/B 1種目以上チェック）／高強度日（登攀・柔術・山行）／休養日
+// 日区分：筋トレ日（ジム/自宅/旧筋トレの1種目以上チェック）／高強度日（登攀・柔術・山行）／休養日
 function dayKind(dd) {
-  if (dayActs(dd).some((a) => a === "trainA" || a === "trainB") && checkedCount(dd) > 0) return "train";
+  if (dayActs(dd).some(isTrainAct) && checkedCount(dd) > 0) return "train";
   if (dayActs(dd).some(isPhysicalAct)) return "hard";
   return "rest";
 }
 const DAY_KIND_LABEL = { train: "筋トレ日 💪", hard: "高強度日", rest: "休養日" };
-// 今週（月曜始まり）の筋トレ実施日数（trainA/Bで1種目以上チェックした日）
+// 今週（月曜始まり）の筋トレ実施日数（筋トレ系actsで1種目以上チェックした日）
 function weeklyTrain(anchorKey) {
   const w = weekInfo(anchorKey);
   let n = 0;
   for (let i = 0; i < w.dayN; i++) {
     const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
-    if (dayActs(dd).some((a) => a === "trainA" || a === "trainB") && checkedCount(dd) > 0) n++;
+    if (dayActs(dd).some(isTrainAct) && checkedCount(dd) > 0) n++;
   }
   return n;
 }
@@ -106,17 +112,26 @@ function weeklyDrill(anchorKey) {
   }
   return n;
 }
-// v4.0モック取り込み：週の部位カバレッジ（脚/押す/引く）ティッカー。メニューのチェックと挙上記録の両方を実績として数える。
-// 🔒48h＝当日または前日に実施（回復期間の目安。日単位で判定し、時刻は使わない＝捏造しない）
+// v5.2：週の部位カバレッジ（脚/押す/引く）ティッカー。チップ3枚はジム2回で完売する設計：
+// ジムA（1種目以上チェック）で[押す][引く]、ジムB（同）で[脚]を消化。自宅A/B/Cはすべて上積み扱い＝チップを消化しない。
+// 🔒48h＝当日または前日に実施（回復期間の目安。日単位で判定し、時刻は使わない＝捏造しない）。同一ジムカードの連日不可もこのロックで表現
+// 引く系の48hは広く取る：ジムA・自宅の懸垂実績・登攀（ドラツー含む）同士は中1日以上（v5.2 §2）
+const pullHit = (dd) => {
+  if (!dd) return false;
+  if (dayActs(dd).includes("trainGymA") && checkedCount(dd) > 0) return true;
+  if (dayActs(dd).includes("climb")) return true;
+  const checks = ((dd.workout || {}).checks) || [];
+  if (["wpullup", "pullupBW", "pullup", "row"].some((id) => checks.includes(id))) return true;
+  return (dd.lifts || []).some((r) => r.ex === "pullup" || r.ex === "latpull" || r.ex === "pulleyrow");
+};
 const LIFT_CATS = [
-  { label: "脚",   checks: ["boxjump", "bulgarian", "slrdl", "calf", "swing", "stepup"], lifts: ["bulgarian", "rdl", "swing"] },
-  { label: "押す", checks: ["push"], lifts: ["dips"] },
-  { label: "引く", checks: ["pullup", "row"], lifts: ["pullup"] },
+  { label: "脚",   acts: ["trainGymB"], lifts: ["legpress", "legcurl", "legext", "backpress", "sideraise", "pressdown", "calfgym"] },
+  { label: "押す", acts: ["trainGymA"], lifts: ["benchM", "deckfly", "machcurl"] },
+  { label: "引く", acts: ["trainGymA"], lifts: ["latpull", "pulleyrow"], lock: pullHit },
 ];
 function catHit(dd, cat) {
   if (!dd) return false;
-  const checks = ((dd.workout || {}).checks) || [];
-  if (cat.checks.some((id) => checks.includes(id))) return true;
+  if (cat.acts.some((a) => dayActs(dd).includes(a)) && checkedCount(dd) > 0) return true;
   return (dd.lifts || []).some((r) => cat.lifts.includes(r.ex));
 }
 // アンカー日基準：done=その週（月曜〜アンカー日）に実施あり／locked=アンカー日か前日に実施（48h回復中）
@@ -125,11 +140,12 @@ function liftCatState(anchorKey) {
   const a = new Date(anchorKey.split("-")[0], anchorKey.split("-")[1] - 1, anchorKey.split("-")[2]);
   const yk = toKey(new Date(a.getFullYear(), a.getMonth(), a.getDate() - 1));
   return LIFT_CATS.map((cat) => {
+    const hit = (dd) => cat.lock ? cat.lock(dd) : catHit(dd, cat);
     let done = false;
     for (let i = 0; i < w.dayN; i++) {
       if (catHit(data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))], cat)) { done = true; break; }
     }
-    return { label: cat.label, done, locked: catHit(data[anchorKey], cat) || catHit(data[yk], cat) };
+    return { label: cat.label, done, locked: hit(data[anchorKey]) || hit(data[yk]) };
   });
 }
 // 「一度だけ出す通知」の共通処理：初出日に記録し、その日のあいだは表示・以後は出さない
@@ -145,8 +161,46 @@ function onceNote(storeKey, scope, active) {
   return flag === scope + ":" + today;
 }
 
-// v3.2改訂 確定メニュー（外部プラン統合・下半身/片脚系優先・進行はダブルプログレッション）。アプリは記録係：メニュー管理機能は持たない
+// v5.2改訂 確定メニュー（ジム×自宅 役割分担版）。アプリは記録係：メニュー管理機能は持たない
+// ジム=膝主導+上半身の量産（負荷は指導員の指示・最終セットのみ記録）／自宅=ヒンジ+懸垂の専門工房（漸進は自己管理）
+// 旧trainA/trainBは過去日の表示用に残置（新規トグルUIには出さない）
 const MENU = {
+  trainGymA: [ // 押す＋引く（指導員管理・最終セットのみ記録）
+    { id: "benchM",    name: "ベンチプレス（マシン）", spec: "指導員の指示重量・最終セットのみ記録（kg）" },
+    { id: "deckfly",   name: "デッキフライ",           spec: "最終セットのみ記録（kg）" },
+    { id: "latpull",   name: "ラットプルダウン",       spec: "最終セットのみ記録（段）" },
+    { id: "pulleyrow", name: "プーリーロウ",           spec: "最終セットのみ記録（kg）" },
+    { id: "machcurl",  name: "マシンカール（任意）",   spec: "最終セットのみ記録（kg）" },
+    { id: "situp",     name: "シットアップ（任意）",   spec: "最終セットのみ記録（段）" },
+  ],
+  trainGymB: [ // 脚＋肩＋三頭（指導員管理・最終セットのみ記録）
+    { id: "legpress",  name: "レッグプレス",             spec: "最終セットのみ記録（枚）" },
+    { id: "legcurl",   name: "レッグカール",             spec: "最終セットのみ記録（kg）" },
+    { id: "legext",    name: "レッグエクステンション",   spec: "最終セットのみ記録（kg）" },
+    { id: "backpress", name: "バックプレス",             spec: "最終セットのみ記録（段）" },
+    { id: "sideraise", name: "サイドレイズ（マシン）",   spec: "最終セットのみ記録（kg）" },
+    { id: "pressdown", name: "プレスダウン",             spec: "最終セットのみ記録（kg）" },
+    { id: "calfgym",   name: "カーフレイズ（ジム）",     spec: "最終セットのみ記録（段）" },
+  ],
+  homeA: [ // ヒンジ標準日（約30分・漸進は自己管理）
+    { id: "boxjump",  name: "ボックスジャンプ",       spec: "3-5×3・最初に。接地40-60/回" },
+    { id: "swing1",   name: "片手スイング",           spec: "KB24 左右5×3（→育てて左右8×5＝32kg購入再審議ライン）" },
+    { id: "kbdl",     name: "KBデッドリフト",         spec: "KB24 8×3" },
+    { id: "wpullup",  name: "加重懸垂",               spec: "+16kg 6-8×3（波状・ボリューム側）" },
+    { id: "wdips",    name: "加重ディップス（任意）", spec: "+16kg 10×3" },
+  ],
+  homeB: [ // ヒンジ重い日（約25分・自宅Aと週替わり）
+    { id: "boxjump",  name: "ボックスジャンプ",       spec: "3-5×3" },
+    { id: "swing2",   name: "両手スイング",           spec: "KB24 10×3（テンポ・フロート重視）" },
+    { id: "kbdl",     name: "KBデッドリフト",         spec: "KB24 8×3" },
+    { id: "wpullup",  name: "加重懸垂",               spec: "+24kg 3-5×3（波状・強度側）" },
+    { id: "wdips",    name: "加重ディップス（任意）", spec: "+24kg 5×3" },
+  ],
+  homeC: [ // 保険の日（15分・疲労時/時間がない時の代替。連発可・罪悪感不要枠）
+    { id: "swing2",   name: "両手スイング", spec: "KB24 10×2" },
+    { id: "pullupBW", name: "懸垂",         spec: "自重 5×2" },
+    { id: "mobility", name: "モビリティ",   spec: "足首プログラム or 遊び枠ムーブメントフロー" },
+  ],
   trainA: [ // 脚＋引く力（週1）
     { id: "tgu",       name: "TGU（任意・習得枠）",      spec: "軽量（靴 or 5kgDB）左右1・16kgまで育てば正式昇格検討" },
     { id: "wupA",      name: "W-up",                  spec: "足首壁・90/90・自重スプリット・スキャプラ・軽ジャンプ" },
@@ -583,13 +637,46 @@ function measThisWeek(anchorKey) {
 // day.lifts = [{ex, load, reps, sets, t}]。loadは文字列（"自重"/"KB16"/"+5"…）で数値換算はビュー側
 const LIFT_EX_KEY = "mealog:liftex"; // ユーザー追加種目（端末ローカル。データ本体はGist同期されるがマスタ追加分は端末ごと）
 const LIFT_LOADS_ALL = ["自重", "KB16", "KB24", "+5", "+8", "+12", "+16", "+20", "+24"];
+// ジム機材の負荷刻み（kg=5kg刻み／段・枚=1刻み）。実機の刻みと違っても数値文字列なので判定・表示はそのまま通る
+const gymLoads = (unit, from, to, step) => { const a = []; for (let v = from; v <= to; v += step) a.push(v + unit); return a; };
+// v5.2：自宅=ヒンジ+懸垂の専門工房（漸進は自己管理）／ジム=記録のみ（gym:true。負荷は指導員の指示・目安＝前進推奨は出さない）
 const LIFT_DEF = [
-  { id: "bulgarian", label: "ブルガリアン", loads: ["自重", "KB16", "KB24"] },
-  { id: "dips",      label: "ディップス",   loads: ["自重", "+5", "+8", "+12", "+16", "+20", "+24"] }, // +24=KB24を吊るす
-  { id: "swing",     label: "スイング",     loads: ["KB16", "KB24"] }, // 片手は種目追加で
-  { id: "rdl",       label: "RDL(片脚)",    loads: ["KB16", "KB24"] },
+  // 自宅
+  { id: "swing1",    label: "片手スイング", loads: ["KB16", "KB24"] },
+  { id: "swing",     label: "両手スイング", loads: ["KB16", "KB24"] },
+  { id: "kbdl",      label: "KBデッド",     loads: ["KB16", "KB24"] },
   { id: "pullup",    label: "懸垂",         loads: ["自重", "+5", "+8", "+12", "+16", "+20", "+24"] }, // +24=KB24を吊るす
+  { id: "dips",      label: "ディップス",   loads: ["自重", "+5", "+8", "+12", "+16", "+20", "+24"] }, // v5.2で任意枠に降格（主力はジムのベンチ+デッキフライ）
+  { id: "bulgarian", label: "ブルガリアン", loads: ["自重", "KB16", "KB24"] }, // v5.2でレッグプレスに役割移管・マスタには残置
+  { id: "rdl",       label: "RDL(片脚)",    loads: ["KB16", "KB24"] },         // v5.2廃止（KBデッドに吸収）・過去記録の表示用に残置
+  // ジムA 押す＋引く
+  { id: "benchM",    label: "ベンチ(マシン)",   gym: true, loads: gymLoads("kg", 5, 70, 5) },
+  { id: "deckfly",   label: "デッキフライ",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
+  { id: "latpull",   label: "ラットプル",       gym: true, loads: gymLoads("段", 1, 14, 1) },
+  { id: "pulleyrow", label: "プーリーロウ",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
+  { id: "machcurl",  label: "マシンカール",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
+  { id: "situp",     label: "シットアップ",     gym: true, loads: gymLoads("段", 1, 14, 1) },
+  // ジムB 脚＋肩＋三頭
+  { id: "legpress",  label: "レッグプレス",     gym: true, loads: gymLoads("枚", 1, 14, 1) },
+  { id: "legcurl",   label: "レッグカール",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
+  { id: "legext",    label: "レッグエクステ",   gym: true, loads: gymLoads("kg", 5, 70, 5) },
+  { id: "backpress", label: "バックプレス",     gym: true, loads: gymLoads("段", 1, 14, 1) },
+  { id: "sideraise", label: "サイドレイズ",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
+  { id: "pressdown", label: "プレスダウン",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
+  { id: "calfgym",   label: "カーフ(ジム)",     gym: true, loads: gymLoads("段", 1, 14, 1) },
 ];
+// 挙上カードの種目チップを当日のactで絞る（ジム日はそのジムの種目、自宅系・act無しは自宅種目。カスタム種目は常に表示）
+const GYM_A_LIFTS = ["benchM", "deckfly", "latpull", "pulleyrow", "machcurl", "situp"];
+const GYM_B_LIFTS = ["legpress", "legcurl", "legext", "backpress", "sideraise", "pressdown", "calfgym"];
+const HOME_LIFTS = ["swing1", "swing", "kbdl", "pullup", "dips"];
+function liftChoicesFor(dd) {
+  const acts = dayActs(dd);
+  let ids = [];
+  if (acts.includes("trainGymA")) ids = ids.concat(GYM_A_LIFTS);
+  if (acts.includes("trainGymB")) ids = ids.concat(GYM_B_LIFTS);
+  if (!ids.length || acts.some((a) => a === "homeA" || a === "homeB" || a === "homeC" || a === "trainA" || a === "trainB")) ids = ids.concat(HOME_LIFTS);
+  return ids.map((id) => LIFT_DEF.find((e) => e.id === id)).filter(Boolean).concat(liftCustom());
+}
 function liftCustom() {
   try { const a = JSON.parse(localStorage.getItem(LIFT_EX_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; }
 }
@@ -619,7 +706,15 @@ function liftPrev(ex, beforeKey, beforeIdx) {
   return prev;
 }
 // 今日のメニュー行→挙上種目の対応（挙上記録がある種目だけ前回記録を行内に出す。boxjump等はday.meas系で別管理）
-const MENU_LIFT = { bulgarian: "bulgarian", pullup: "pullup", slrdl: "rdl", swing: "swing", push: "dips" };
+const MENU_LIFT = {
+  // 旧カード（過去日表示用）
+  bulgarian: "bulgarian", pullup: "pullup", slrdl: "rdl", swing: "swing", push: "dips",
+  // v5.2 自宅カード
+  swing1: "swing1", swing2: "swing", kbdl: "kbdl", wpullup: "pullup", wdips: "dips", pullupBW: "pullup",
+  // v5.2 ジムカード（メニューIDと挙上IDは同名）
+  benchM: "benchM", deckfly: "deckfly", latpull: "latpull", pulleyrow: "pulleyrow", machcurl: "machcurl", situp: "situp",
+  legpress: "legpress", legcurl: "legcurl", legext: "legext", backpress: "backpress", sideraise: "sideraise", pressdown: "pressdown", calfgym: "calfgym",
+};
 // メニュー行用の前回記録1行：「前回 10/28 +16kg 6×3　目安 7×3 / +20kg」。未記録なら空＝行を出さない
 function liftPrevLine(liftId) {
   let hit = null;
@@ -628,13 +723,15 @@ function liftPrevLine(liftId) {
     for (const r of ls) if (r && r.ex === liftId) hit = { k, r };
   }
   if (!hit) return "";
-  // 目安＝ダブルプログレッション（同重量で回数+1、重量リストの次段があればそれも並記）
-  const parts = [];
-  if (hit.r.reps != null) parts.push(`${Number(hit.r.reps) + 1}×${hit.r.sets != null ? hit.r.sets : 1}`);
   const def = liftMaster().find((x) => x.id === liftId);
-  const loads = (def && def.loads) || LIFT_LOADS_ALL;
-  const i = loads.indexOf(String(hit.r.load));
-  if (i >= 0 && i + 1 < loads.length) parts.push(fmtLoad(loads[i + 1]));
+  // 目安＝ダブルプログレッション（同重量で回数+1、重量リストの次段があればそれも並記）。ジム種目は記録のみ＝前進の推奨は出さない（v5.2 §5）
+  const parts = [];
+  if (!(def && def.gym)) {
+    if (hit.r.reps != null) parts.push(`${Number(hit.r.reps) + 1}×${hit.r.sets != null ? hit.r.sets : 1}`);
+    const loads = (def && def.loads) || LIFT_LOADS_ALL;
+    const i = loads.indexOf(String(hit.r.load));
+    if (i >= 0 && i + 1 < loads.length) parts.push(fmtLoad(loads[i + 1]));
+  }
   return `<div style="font-size:12.5px;margin-top:3px;line-height:1.5"><span style="color:var(--muted)">前回</span> <span class="mono" style="color:var(--text)">${esc(hit.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(hit.r.load))} ${esc(liftRepsSets(hit.r))}</span>${parts.length ? `　<span style="color:var(--muted)">目安</span> <span class="mono" style="color:var(--text)">${esc(parts.join(" / "))}</span>` : ""}</div>`;
 }
 // 前進判定：重量↑ or 同重量で回数↑ or 同重量同回数でセット↑ → up。全て同値 → keep。下回るときはnull＝何も言わない
@@ -675,12 +772,13 @@ function liftMeasPatch(rec) {
   return Object.keys(m).length ? m : null;
 }
 // §3-1 フリーテキスト由来の挙上メモをパース成功時だけ同形式に正規化（読めない場合も従来の保存はそのまま）
-const LIFT_TEXT_RE = /^(ブルガリアン|ディップス|懸垂|(?:片脚)?RDL|(?:KB)?スイング)/;
+const LIFT_TEXT_RE = /^(ブルガリアン|ディップス|懸垂|(?:片脚)?RDL|片手スイング|KBデッド(?:リフト)?|(?:KB|両手)?スイング)/;
 function parseLiftText(text) {
   const t = text.trim();
   const m = LIFT_TEXT_RE.exec(t);
   if (!m) return null;
-  const ex = /ブルガリアン/.test(m[1]) ? "bulgarian" : /ディップス/.test(m[1]) ? "dips" : /懸垂/.test(m[1]) ? "pullup" : /RDL/.test(m[1]) ? "rdl" : "swing";
+  const ex = /ブルガリアン/.test(m[1]) ? "bulgarian" : /ディップス/.test(m[1]) ? "dips" : /懸垂/.test(m[1]) ? "pullup" : /RDL/.test(m[1]) ? "rdl"
+    : /片手スイング/.test(m[1]) ? "swing1" : /KBデッド/.test(m[1]) ? "kbdl" : "swing";
   const plus = /[+＋][\s　]*(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.exec(t);
   // 「KB24」表記も重量として受ける（吊るす種目では+N換算）。種目名の"KBスイング"のKBは数字が続かないので誤爆しない
   const kb = plus ? null : /KB[\s　]*(\d{1,3}(?:\.\d+)?)/i.exec(t);
@@ -794,7 +892,8 @@ function postTrainCarb(day) {
   return { c };
 }
 // ---- 月次判定エンジン（§2。毎月末日に計算し翌月の方向を決める。判定は機械・承認は本人） ----
-const MAIN_LIFTS = ["dips", "pullup", "swing", "bulgarian"];
+// v5.2 §5：Lはジム・自宅の両方の数値前進をカウント対象（マスタ定義の全種目。カスタム種目は対象外）
+const MAIN_LIFTS = LIFT_DEF.map((e) => e.id);
 const ymOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 const monthEnd = (ym) => { const [y, m] = ym.split("-").map(Number); return new Date(y, m, 0); };
 const prevYm = (ym) => { const [y, m] = ym.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`; };
@@ -1009,7 +1108,7 @@ async function fetchBakao(key) {
 
 目標（v4.2 体重連動式：係数×体重7日平均で週1自動更新）：たんぱく質は基準${G.pBase}g（毎日必達）、筋トレ日・高強度日は${G.pTrain}gを目標にする（上限ではなく、超えても全く問題ない）。糖質は下限管理：休養日${G.cRest}g・筋トレ/高強度日${G.cTrain}gを下回らないことが目標で、上限は設けない（血糖対策は玄米優先・食後散歩・ドカ食い回避という質とタイミングで行い、総量は絞らない）。筋トレ日はトレ後2時間以内に糖質40〜60gの補給が目安（達成していたら軽く肯定してよい）。P残・C下限残があるときは、具体的な食品での埋め方をひとつ示す（例：おにぎり1個で糖質+40g、プロテイン1杯でP+20g）。増量ペースの良し悪し（速い・遅い等）の裁定は月次判定エンジンの担当なので、日々の評価では体重の増減ペースを判定・論評しない。
 
-筋トレ設計：週2必須・最優先。自宅装備（KB16/24kg・プライオボックス・懸垂バー・ディップススタンド等）でA（脚＋引き）/B（登山脚＋押し・ロウ）の週2。片脚系・下半身優先（柔術・山・ドラツーの3ゴールとも下半身が律速）。加えてドライツーリング週1＋柔術復帰ドリル週1-2。懸垂は少なめの設定（2-3セット）が正しい状態で、増やすことを促さない（プルはドラツーが担う）。KBスイングはフォーム優先。「速度が落ちたら終了」を支持し回数増を煽らない。Zone2有酸素は週${GOALS.zone2Max}分上限（増量優先）。上限を上回っているときは回復を推す。グリップは強化対象（目標${GOALS.grip}kg）。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。筋トレA翌日は殿筋・ハム、B翌日は胸・肩・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・懸垂・ディップス・ハング・膝壁・腹囲）の向上は増量の進捗として肯定的に扱う。ただし腹囲が体重より明らかに速く増える傾向が続く場合のみ、体脂肪率の確認を軽く促す（減量提案はしない）。本人の記述に中止サイン（鼠径部の痛み・肘内側の一点痛・腰からのしびれ等）があれば、その種目の中止・変更と、続く場合の医療機関相談を勧める。体重が${GOALS.midReview}kgに到達している場合、中間評価（パフォーマンス再評価）のタイミングであることに一度だけ軽く触れてよい（毎回繰り返さない）。
+筋トレ設計（v5.2 ジム×自宅 役割分担）：ジムA（押す＋引く）＋ジムB（脚＋肩＋三頭）の週2がマスト。ジム種目の負荷は指導員の指示に従い、アプリは最終セットの記録のみ＝前進を煽らない。自宅は週1推奨のボーナス枠（落としても週は成立・責めない）：ヒンジ＋懸垂の専門工房で、自宅A（片手スイング・KBデッド・加重懸垂+16kgボリューム側）と自宅B（両手スイング・KBデッド・加重懸垂+24kg強度側）を週替わり交互、疲労時は自宅C（15分の保険の日・連発可・罪悪感不要枠）で代替してよい。引く系（ジムA・自宅の加重懸垂・ドラツー）同士は中1日以上。片脚系・下半身優先（柔術・山・ドラツーの3ゴールとも下半身が律速）。加えてドライツーリング週1＋柔術復帰ドリル週1-2。KBスイングはフォーム優先。「速度が落ちたら終了」を支持し回数増を煽らない。Zone2有酸素は週${GOALS.zone2Max}分上限（増量優先）。上限を上回っているときは回復を推す。グリップは強化対象（目標${GOALS.grip}kg）。トレ60分前に補食+コラーゲン+C、トレ後60分に回復食。ジムA翌日は胸・背中、ジムB翌日は脚・肩・三頭、自宅（ヒンジ）翌日は殿筋・ハム・前腕の回復（たんぱく質摂取・睡眠）に一言触れてよい。測定値（握力・懸垂・ディップス・ハング・膝壁・腹囲）の向上は増量の進捗として肯定的に扱う。ただし腹囲が体重より明らかに速く増える傾向が続く場合のみ、体脂肪率の確認を軽く促す（減量提案はしない）。本人の記述に中止サイン（鼠径部の痛み・肘内側の一点痛・腰からのしびれ等）があれば、その種目の中止・変更と、続く場合の医療機関相談を勧める。体重が${GOALS.midReview}kgに到達している場合、中間評価（パフォーマンス再評価）のタイミングであることに一度だけ軽く触れてよい（毎回繰り返さない）。
 
 実施調整の前提（v3.3）：ブルガリアンスクワットは16kgに調整済みで、これは正しい調整（「後退」と表現しない）。「フォームが崩れたら下げる／脚の疲労だけなら維持」の判断基準を支持する。ディップスはナロー加重が主役で、加重の進捗（+5→+8→KB16kg吊り）は増量の成果として肯定する。上半身は想定より強く、下半身が伸びしろ——という非対称プロフィールを前提に話す。TGUは任意の習得枠（実施記録があれば軽く肯定、未実施でも触れない）。装備の購入は完了済み（KB16/24kg・プライオボックス・ディップスベルト・バンド4本等）で、追加購入の相談には原則「不要」と答える。唯一の例外：片手スイング24kgで左右8回×5セットを質を保って完遂したら、32kg KBの購入条件達成として一度だけ案内してよい。ドラツー当日または翌日は、最弱バンドでの肩外旋・前腕伸筋ケア5分を軽く勧めてよい。
 
@@ -1376,8 +1475,8 @@ function bgMeals(cfg, day) {
     groups.get(f.t).foods.push(f);
   }
   const moves = (day.moves || []).map((mv) => ({ kind: mv.kind, dur: Number(mv.min) || 0, m: lateMin(bgTmin(mv.t)) })).filter((mv) => mv.m != null);
-  // 筋トレ（trainA/B）の実施時刻：直後2時間以内の食事に「筋トレ済み」補正（係数cfg.ex.trainが登録されているときのみ）
-  const trains = ["trainA", "trainB"].map((a) => lateMin(bgTmin((day.actTimes || {})[a]))).filter((m) => m != null);
+  // 筋トレ系actsの実施時刻：直後2時間以内の食事に「筋トレ済み」補正（係数cfg.ex.trainが登録されているときのみ）
+  const trains = TRAIN_ACTS.map((a) => lateMin(bgTmin((day.actTimes || {})[a]))).filter((m) => m != null);
   const typeCoef = (name) => {
     for (const t of cfg.mtype) { try { if (t.kw && new RegExp(t.kw).test(name || "")) return Number(t.coef) || 1; } catch (e) {} }
     return Number(cfg.mtype[cfg.mtype.length - 1].coef) || 1; // 末尾＝「その他」
@@ -1614,7 +1713,7 @@ function renderLog() {
       ${ACTS.map((t) =>
         `<button class="dt ${t==="aerobic"?"aero":"active"} ${day.acts.includes(t)?"on":""}" data-act="${t}">${DAY_LABEL[t]}</button>`).join("")}
     </div>
-    <div class="hint" style="margin-top:-8px;margin-bottom:2px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${DAY_KIND_LABEL[dayKind(day)]}</b>${day.acts.some((a)=>a==="trainA"||a==="trainB") && !active ? "（筋トレは1種目チェックで実績）" : ""}</div>
+    <div class="hint" style="margin-top:-8px;margin-bottom:2px">実績判定：<b style="color:${active?"var(--amber)":"var(--green)"}">${DAY_KIND_LABEL[dayKind(day)]}</b>${day.acts.some(isTrainAct) && !active ? "（筋トレは1種目チェックで実績）" : ""}</div>
     ${(() => {
       // v4.0モック取り込み：週次ティッカー（部位カバレッジ・Zone2・食材の筆頭残）。🔒48h＝直近48hに実施＝回復中
       const cats = liftCatState(key).map((c) =>
@@ -1745,7 +1844,8 @@ function renderLog() {
     ${(() => {
       // v4.1 今日の挙上：タップ4回で1種目（種目→重さ→回数→記録）。種目選択で前回値プリセット＝前回と同じなら2タップ。
       // フリーテキスト（下部バー）は例外用として維持。誤記録は行の長押しで削除
-      const master = liftMaster();
+      const master = liftMaster();           // 種目の解決は全マスタ（過去種目・テキスト経由も開ける）
+      const choices = liftChoicesFor(day);   // チップは当日のactで絞る（ジム日はその日の種目）
       const lifts = day.lifts || [];
       const exDef = liftEx ? master.find((e) => e.id === liftEx) : null;
       const rows = lifts.map((r, i) => {
@@ -1773,8 +1873,9 @@ function renderLog() {
         return hit;
       })();
       // 前進の目安＝ダブルプログレッション（同重量で回数+1 → 次の重量へ）。疲労日に下げるのも正しい調整（v3.3）
+      // ジム種目は記録のみ＝目安を出さない（v5.2 §5：負荷は指導員の指示に従う）
       const nextHint = (() => {
-        if (!prevInfo || !exDef) return "";
+        if (!prevInfo || !exDef || exDef.gym) return "";
         const r = prevInfo.r;
         const parts = [];
         if (r.reps != null) parts.push(`${Number(r.reps) + 1}×${r.sets != null ? r.sets : 1}`);
@@ -1793,12 +1894,12 @@ function renderLog() {
         ${rows ? `<div style="margin-top:4px">${rows}</div>` : ""}
         <div class="movechips" style="padding:8px 0 0">
           <span class="mclabel">種目</span>
-          ${master.map((e) => `<button class="chip ${liftEx === e.id ? "on" : ""}" data-liftex="${esc(e.id)}">${esc(e.label)}</button>`).join("")}
+          ${choices.map((e) => `<button class="chip ${liftEx === e.id ? "on" : ""}" data-liftex="${esc(e.id)}">${esc(e.label)}</button>`).join("")}
           <button class="chip" data-liftadd>＋…</button>
         </div>
         ${exDef ? `
         <div style="font-size:12.5px;color:var(--muted);padding:7px 2px 0;line-height:1.7">${prevInfo
-          ? `前回：<span class="mono" style="color:var(--text)">${esc(prevInfo.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(prevInfo.r.load))} ${esc(liftRepsSets(prevInfo.r))}</span>（選択済み）${nextHint}<br>疲労が残る日は一段軽くするのも正しい調整です`
+          ? `前回：<span class="mono" style="color:var(--text)">${esc(prevInfo.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(prevInfo.r.load))} ${esc(liftRepsSets(prevInfo.r))}</span>（選択済み）${nextHint}<br>${exDef.gym ? "負荷は指導員の指示どおりでOK（最終セットのみ記録）" : "疲労が残る日は一段軽くするのも正しい調整です"}`
           : "この種目は初記録です"}</div>
         <div class="movechips" style="padding:6px 0 0">
           <span class="mclabel">重さ</span>
@@ -1844,7 +1945,7 @@ function renderLog() {
       ${(() => {
         // 食事・食後運動・実績トグルの運動を同じ時間軸に交ぜて表示（血糖は時系列の現象のため）。時刻なしは末尾・深夜0〜3時はその日の最後
         const tmin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ""); return m ? lateMin(Number(m[1]) * 60 + Number(m[2])) : Infinity; };
-        const ACT_ICON = { trainA: "💪", trainB: "💪", climb: "🧗", jiujitsu: "🥋", mountain: "⛰", aerobic: "🏃" };
+        const ACT_ICON = { trainGymA: "🏋️", trainGymB: "🏋️", homeA: "💪", homeB: "💪", homeC: "💪", trainA: "💪", trainB: "💪", climb: "🧗", jiujitsu: "🥋", mountain: "⛰", aerobic: "🏃" };
         const rows = day.foods.map((f, i) => ({ o: "f", t: f.t, i, f }))
           .concat((day.moves || []).map((mv, i) => ({ o: "m", t: mv.t, i, mv })))
           .concat(dayActs(day).map((a) => ({ o: "a", t: (day.actTimes || {})[a] ?? null, a })));
@@ -2435,7 +2536,7 @@ function renderSettings() {
           foodlog v2 — たんぱく質 基準100g／運動日目標120g方式の食事＋筋トレログ。<br>
           <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・柔術・山行）から自動判定。有酸素（Zone2）トグルは週次実績の記録のみで糖質目標には影響しない（Fitbit等のワークアウト画面スクショを📊に読ませると自動ON）。<br>
           歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
-          筋トレ：週2（A=ヒンジ・脚／B=引く・押す・体幹）。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
+          筋トレ：ジムA（押す＋引く）＋ジムB（脚）の週2マスト＋自宅A/B/C（ヒンジ＋懸垂・週1推奨の上積み）。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
           糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
           データ保存：この端末＋（同期設定時）あなたのGitHub秘密Gist。Anthropic・GitHub以外の外部には何も送信しません。
         </div>
