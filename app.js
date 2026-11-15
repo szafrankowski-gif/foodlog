@@ -119,9 +119,9 @@ function weeklyDrill(anchorKey) {
 // 引く系の48hは広く取る：ジムA・自宅の懸垂実績・登攀（ドラツー含む）同士は中1日以上（v5.2 §2）
 const pullHit = (dd) => {
   if (!dd) return false;
-  if (dayActs(dd).includes("trainGymA") && checkedCount(dd) > 0) return true;
-  if (dayActs(dd).includes("climb")) return true;
   const checks = ((dd.workout || {}).checks) || [];
+  if (dayActs(dd).includes("trainGymA") && (MENU.trainGymA || []).some((ex) => checks.includes(ex.id))) return true; // ジムA自身の種目チェックのみ
+  if (dayActs(dd).includes("climb")) return true;
   if (["wpullup", "pullupBW", "pullup", "row"].some((id) => checks.includes(id))) return true;
   return (dd.lifts || []).some((r) => r.ex === "pullup" || r.ex === "latpull" || r.ex === "pulleyrow");
 };
@@ -132,7 +132,9 @@ const LIFT_CATS = [
 ];
 function catHit(dd, cat) {
   if (!dd) return false;
-  if (cat.acts.some((a) => dayActs(dd).includes(a)) && checkedCount(dd) > 0) return true;
+  const checks = ((dd.workout || {}).checks) || [];
+  // そのジムカード自身の種目チェックだけを実績に数える（別カードのチェックでチップが点くのを防ぐ）
+  if (cat.acts.some((a) => dayActs(dd).includes(a) && (MENU[a] || []).some((ex) => checks.includes(ex.id)))) return true;
   return (dd.lifts || []).some((r) => cat.lifts.includes(r.ex));
 }
 // アンカー日基準：done=その週（月曜〜アンカー日）に実施あり／locked=アンカー日か前日に実施（48h回復中）
@@ -344,7 +346,8 @@ function migrateLiftDup() {
       if (tv(r) >= tv(best[r.ex])) best[r.ex] = r;
     }
     dd.lifts = order.map((ex) => best[ex]);
-    dd._m = Date.now(); // 清掃結果を他端末にも同期させる
+    // _mは進めない：この清掃は全端末が自前で行うので同期で配る必要がなく、
+    // 起動時pullの前に_mを進めると他端末の新しい編集をマージで上書きする危険がある（pull前push禁止と同じ理由）
   }
 }
 // parseItemsの許可リスト漏れでcat:"liver"が保存されなかった過去データを品名から復元（冪等）
@@ -388,11 +391,13 @@ function renderSoon(ms) {
   }, ms == null ? 700 : ms);
 }
 // 同期完了など「操作起点でない」再描画は、入力・タップの合間まで待つ（操作中のDOM総入れ替え＝タップ無効・キーボード消失を防ぐ）
+let idleRenderTimer = null; // 多重呼び出しでも待機チェーンは常に1本（N回呼ばれてもrenderは1回）
 function renderWhenIdle() {
+  clearTimeout(idleRenderTimer);
   const ae = document.activeElement;
   const typing = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
   if (!typing && !busy && !gestureActive() && Date.now() - lastInteract > 2500) { render(); return; }
-  setTimeout(renderWhenIdle, 1200);
+  idleRenderTimer = setTimeout(renderWhenIdle, 1200);
 }
 function apiKey() { return localStorage.getItem(API_KEY_KEY) || ""; }
 
@@ -759,23 +764,33 @@ const MENU_LIFT = {
   benchM: "benchM", deckfly: "deckfly", latpull: "latpull", pulleyrow: "pulleyrow", machcurl: "machcurl", situp: "situp",
   legpress: "legpress", legcurl: "legcurl", legext: "legext", backpress: "backpress", sideraise: "sideraise", pressdown: "pressdown", calfgym: "calfgym",
 };
-// メニュー行用の前回記録1行：「前回 10/28 +16kg 6×3　目安 7×3 / +20kg」。未記録なら空＝行を出さない
-function liftPrevLine(liftId) {
+// 指定日より前（その日自身は除く）の最新記録を日付つきで返す。「前回」表示の共通入口（当日の記録を前回と呼ばないため）
+function liftLatestBefore(ex, beforeKey) {
   let hit = null;
   for (const k of Object.keys(data).sort()) {
+    if (!isDayKey(k)) continue;
+    if (beforeKey && k >= beforeKey) break;
     const ls = (data[k] && data[k].lifts) || [];
-    for (const r of ls) if (r && r.ex === liftId) hit = { k, r };
+    for (const r of ls) if (r && r.ex === ex) hit = { k, r };
   }
+  return hit;
+}
+// 目安＝ダブルプログレッション（同重量で回数+1、重量リストの次段があればそれも並記）の部品
+function liftHintParts(def, r) {
+  const parts = [];
+  if (r.reps != null) parts.push(`${Number(r.reps) + 1}×${r.sets != null ? r.sets : 1}`);
+  const loads = (def && def.loads) || LIFT_LOADS_ALL;
+  const i = loads.indexOf(String(r.load));
+  if (i >= 0 && i + 1 < loads.length) parts.push(fmtLoad(loads[i + 1]));
+  return parts;
+}
+// メニュー行用の前回記録1行：「前回 10/28 +16kg 6×3　目安 7×3 / +20kg」。未記録なら空＝行を出さない
+function liftPrevLine(liftId, beforeKey) {
+  const hit = liftLatestBefore(liftId, beforeKey);
   if (!hit) return "";
   const def = liftMaster().find((x) => x.id === liftId);
-  // 目安＝ダブルプログレッション（同重量で回数+1、重量リストの次段があればそれも並記）。ジム種目は記録のみ＝前進の推奨は出さない（v5.2 §5）
-  const parts = [];
-  if (!(def && def.gym)) {
-    if (hit.r.reps != null) parts.push(`${Number(hit.r.reps) + 1}×${hit.r.sets != null ? hit.r.sets : 1}`);
-    const loads = (def && def.loads) || LIFT_LOADS_ALL;
-    const i = loads.indexOf(String(hit.r.load));
-    if (i >= 0 && i + 1 < loads.length) parts.push(fmtLoad(loads[i + 1]));
-  }
+  // ジム種目は記録のみ＝前進の推奨（目安）は出さない（v5.2 §5）
+  const parts = (def && def.gym) ? [] : liftHintParts(def, hit.r);
   return `<div style="font-size:12.5px;margin-top:3px;line-height:1.5"><span style="color:var(--muted)">前回</span> <span class="mono" style="color:var(--text)">${esc(hit.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(hit.r.load))} ${esc(liftRepsSets(hit.r))}</span>${parts.length ? `　<span style="color:var(--muted)">目安</span> <span class="mono" style="color:var(--text)">${esc(parts.join(" / "))}</span>` : ""}</div>`;
 }
 // 前進判定：重量↑ or 同重量で回数↑ or 同重量同回数でセット↑ → up。全て同値 → keep。下回るときはnull＝何も言わない
@@ -1233,6 +1248,7 @@ const GYM_SHEET_MAP = [
   [/ベンチ/, "benchM"],
   [/デッキ|フライ/, "deckfly"],
   [/ラット/, "latpull"],
+  [/レッグ.?プレス/, "legpress"],
   [/レッグ.?カール/, "legcurl"],
   [/レッグ.?エクステ/, "legext"],
   [/コンセントレーション|ダンベル.?カール/, "conccurl"],
@@ -1891,7 +1907,7 @@ function renderLog() {
             <div style="flex:1;min-width:0">
               <div style="font-size:16px;color:${on?"var(--text)":"var(--muted)"}">${ex.name}</div>
               <div style="font-size:13px;color:var(--muted);line-height:1.45" class="mono">${ex.spec}</div>
-              ${MENU_LIFT[ex.id] ? liftPrevLine(MENU_LIFT[ex.id]) : ""}
+              ${MENU_LIFT[ex.id] ? liftPrevLine(MENU_LIFT[ex.id], key) : ""}
             </div>
           </div>`;
         }).join("")}
@@ -1986,26 +2002,14 @@ function renderLog() {
       if (exDef && liftLoad != null && !loads.includes(liftLoad)) loads.push(liftLoad);
       const repsList = [...new Set([3, 5, 6, 8, 10, 12].concat(liftReps != null ? [Number(liftReps)] : []))].sort((a, b) => a - b);
       const setsList = [...new Set([1, 2, 3, 5].concat(liftSets != null ? [Number(liftSets)] : []))].sort((a, b) => a - b); // 1＝最終セットのみ記録（ジム運用）
-      // 前回記録の明示表示（日付つき）。プリセットの中身を見える化し「今日は何を超えるか」をその場で確認できるように
-      const prevInfo = (() => {
-        if (!exDef) return null;
-        let hit = null;
-        for (const k of Object.keys(data).sort()) {
-          const ls = (data[k] && data[k].lifts) || [];
-          for (const r of ls) if (r && r.ex === liftEx) hit = { k, r };
-        }
-        return hit;
-      })();
-      // 前進の目安＝ダブルプログレッション（同重量で回数+1 → 次の重量へ）。疲労日に下げるのも正しい調整（v3.3）
-      // ジム種目は記録のみ＝目安を出さない（v5.2 §5：負荷は指導員の指示に従う）
+      // 前回記録の明示表示（日付つき・その日自身の記録は前回と呼ばない）。「今日は何を超えるか」をその場で確認できるように
+      const prevInfo = exDef ? liftLatestBefore(liftEx, key) : null;
+      // プリセット（前回値そのまま）と表示中の前回が一致するときだけ「（選択済み）」を名乗る
+      const presetIsPrev = prevInfo && String(prevInfo.r.load) === String(liftLoad) && Number(prevInfo.r.reps) === Number(liftReps);
+      // 前進の目安＝ダブルプログレッション。疲労日に下げるのも正しい調整（v3.3）。ジム種目は記録のみ＝目安を出さない（v5.2 §5）
       const nextHint = (() => {
         if (!prevInfo || !exDef || exDef.gym) return "";
-        const r = prevInfo.r;
-        const parts = [];
-        if (r.reps != null) parts.push(`${Number(r.reps) + 1}×${r.sets != null ? r.sets : 1}`);
-        const ls = exDef.loads || LIFT_LOADS_ALL;
-        const i = ls.indexOf(String(r.load));
-        if (i >= 0 && i + 1 < ls.length) parts.push(fmtLoad(ls[i + 1]));
+        const parts = liftHintParts(exDef, prevInfo.r);
         return parts.length ? `　·　前進の目安 <span class="mono">${esc(parts.join(" / "))}</span>` : "";
       })();
       return `
@@ -2023,8 +2027,8 @@ function renderLog() {
         </div>
         ${exDef ? `
         <div style="font-size:12.5px;color:var(--muted);padding:7px 2px 0;line-height:1.7">${prevInfo
-          ? `前回：<span class="mono" style="color:var(--text)">${esc(prevInfo.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(prevInfo.r.load))} ${esc(liftRepsSets(prevInfo.r))}</span>（選択済み）${nextHint}<br>${exDef.gym ? "負荷は指導員の指示どおりでOK（最終セットのみ記録）" : "疲労が残る日は一段軽くするのも正しい調整です"}`
-          : "この種目は初記録です"}</div>
+          ? `前回：<span class="mono" style="color:var(--text)">${esc(prevInfo.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(prevInfo.r.load))} ${esc(liftRepsSets(prevInfo.r))}</span>${presetIsPrev ? "（選択済み）" : ""}${nextHint}<br>${exDef.gym ? "負荷は指導員の指示どおりでOK（最終セットのみ記録）" : "疲労が残る日は一段軽くするのも正しい調整です"}`
+          : ((day.lifts || []).some((r) => r && r.ex === liftEx) ? "今日が初回の記録です（記録し直すと上書きされます）" : "この種目は初記録です")}</div>
         <div class="movechips" style="padding:6px 0 0">
           <span class="mclabel">重さ</span>
           ${loads.map((l) => `<button class="chip ${liftLoad === l ? "on" : ""}" data-liftload="${esc(l)}">${esc(fmtLoad(l))}</button>`).join("")}
@@ -2849,7 +2853,9 @@ function bindEvents() {
       updateDayQuiet(key, { workout: w });
       // 行とカウンタはその場で更新。実績判定・ゲージなど依存表示は手が止まってから反映（renderSoon）
       const box = row.querySelector(".box"); if (box) { box.classList.toggle("on", on); box.textContent = on ? "✓" : ""; }
-      const nm = row.querySelector("div div"); if (nm) nm.style.color = on ? "var(--text)" : "var(--muted)";
+      // 種目名のdivは「2番目の子（flexラッパ）の最初の子」。querySelector("div div")はラッパ自身に当たり効かない
+      const wrap = row.children[1], nm = wrap && wrap.firstElementChild;
+      if (nm) nm.style.color = on ? "var(--text)" : "var(--muted)";
       const pb = row.closest(".pacebox"), sec = row.closest(".section");
       if (pb && sec) {
         const doneN = pb.querySelectorAll(".box.on").length, total = pb.querySelectorAll(".pacerow").length;
