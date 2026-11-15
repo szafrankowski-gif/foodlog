@@ -1825,9 +1825,11 @@ function renderLog() {
   const kind = dayKind(day);
   const carbFloor = active ? G.cTrain : G.cRest;
   const carbCap = carbCapOf(carbFloor); // 適量帯上端（表示用・ハードリミットではない）
-  const carbColor = carbBarColor(carbs, carbFloor);
+  const carbOverCap = carbs > carbCap;
+  // 3状態を一目で：帯の下限到達＝達成（バー全体が満タンに見える）／上限到達＝琥珀色で区別（赤は使わない）
+  const carbColor = carbOverCap ? "var(--amber)" : carbBarColor(carbs, carbFloor);
   const carbPct = Math.min(carbCap > 0 ? carbs / carbCap : 0, 1) * 100; // ゲージは帯上端を100%に
-  const carbDiff = carbs < carbFloor ? `適量帯まであと ${carbFloor - carbs}g` : "満タン⛽";
+  const carbDiff = carbs < carbFloor ? `適量帯まであと ${carbFloor - carbs}g` : carbOverCap ? "帯の上限到達" : "満タン⛽";
   // 21時以降（深夜0〜3時も同じ論理日）で下限まで50g以上残っていたら、責めないリマインドを一言
   const nowH = new Date().getHours();
   const carbRemind = isToday && (nowH >= 21 || nowH < 3) && (carbFloor - carbs) >= 50;
@@ -1975,11 +1977,14 @@ function renderLog() {
         <div><span class="mono" style="font-size:${main ? 34 : 26}px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:15px;color:var(--muted)"> g</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-        <div class="hbar" style="position:relative${main ? ";height:14px" : ""}">
-          <div style="position:absolute;left:${(carbFloor / carbCap * 100).toFixed(1)}%;right:0;top:0;bottom:0;background:var(--green);opacity:.18"></div>
+        <div class="hbar" style="position:relative${main ? ";height:14px" : ""};overflow:hidden">
+          ${carbs >= carbFloor && !carbOverCap
+            ? `<div style="position:absolute;inset:0;background:var(--green);opacity:.35"></div>` /* 達成後は残りヘッドルームも薄緑＝タンクが満ちて見える */
+            : `<div style="position:absolute;left:${(carbFloor / carbCap * 100).toFixed(1)}%;right:0;top:0;bottom:0;background:var(--green);opacity:.18"></div>`}
           <div class="fill" data-carbfill style="width:${carbPct}%;background:${carbColor}"></div>
+          <div style="position:absolute;left:${(carbFloor / carbCap * 100).toFixed(1)}%;top:0;bottom:0;width:2px;background:var(--green)"></div>
         </div>
-        <span class="mono" style="flex-shrink:0;font-size:14px;color:${carbs >= carbFloor ? "var(--green)" : "var(--muted)"}">${carbDiff}</span>
+        <span class="mono" style="flex-shrink:0;font-size:14px;color:${carbOverCap ? "var(--amber)" : carbs >= carbFloor ? "var(--green)" : "var(--muted)"}">${carbDiff}</span>
       </div>
       ${carbs > carbCap ? `<div style="font-size:13px;color:var(--muted);margin-top:6px">今日は満タン。ここからは明日の分</div>` : ""}
       ${carbRemind ? `<div style="font-size:13px;color:var(--ice);margin-top:6px">適量帯まであと${carbFloor - carbs}g。おにぎり1個で+40gです。</div>` : ""}
