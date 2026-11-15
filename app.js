@@ -317,7 +317,28 @@ function load() {
     }
   }
   migrateLiverCat();
+  migrateLiftDup();
   save();
+}
+// v5.2.6：同一日の同一種目の挙上を1件に統合（上書き方式の導入前に追記された重複の清掃。冪等）。
+// 「同じ種目は1日に複数回やらない」運用前提。残すのは時刻がいちばん新しい記録＝最後の手入力（深夜0〜3時は同日の夜の続き扱い・時刻なしは負け・全く同じなら後の行）
+function migrateLiftDup() {
+  const tv = (r) => { const m = /^(\d{1,2}):(\d{2})$/.exec((r && r.t) || ""); if (!m) return -1; const v = Number(m[1]) * 60 + Number(m[2]); return v < 180 ? v + 1440 : v; };
+  for (const k of Object.keys(data)) {
+    if (!isDayKey(k)) continue;
+    const dd = data[k];
+    if (!dd || !Array.isArray(dd.lifts) || dd.lifts.length < 2) continue;
+    const seen = new Set();
+    if (!dd.lifts.some((r) => r && r.ex && (seen.has(r.ex) ? true : (seen.add(r.ex), false)))) continue;
+    const best = {}, order = [];
+    for (const r of dd.lifts) {
+      if (!r || !r.ex) continue;
+      if (!(r.ex in best)) { best[r.ex] = r; order.push(r.ex); continue; }
+      if (tv(r) >= tv(best[r.ex])) best[r.ex] = r;
+    }
+    dd.lifts = order.map((ex) => best[ex]);
+    dd._m = Date.now(); // 清掃結果を他端末にも同期させる
+  }
 }
 // parseItemsの許可リスト漏れでcat:"liver"が保存されなかった過去データを品名から復元（冪等）
 function migrateLiverCat() {
