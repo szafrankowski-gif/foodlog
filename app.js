@@ -664,6 +664,10 @@ const LIFT_DEF = [
   { id: "sideraise", label: "サイドレイズ",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
   { id: "pressdown", label: "プレスダウン",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
   { id: "calfgym",   label: "カーフ(ジム)",     gym: true, loads: gymLoads("段", 1, 14, 1) },
+  // ジム記録用紙にあるがv5.2メニュー外の種目（用紙読取で記録されたときの表示・前回参照用）
+  { id: "squat",     label: "スクワット(BB)",   gym: true, loads: gymLoads("kg", 5, 70, 5) },
+  { id: "conccurl",  label: "ダンベルカール",   gym: true, loads: gymLoads("kg", 5, 30, 5) },
+  { id: "backext",   label: "バックエクステ",   gym: true, loads: gymLoads("段", 1, 14, 1) },
 ];
 // 挙上カードの種目チップを当日のactで絞る（ジム日はそのジムの種目、自宅系・act無しは自宅種目。カスタム種目は常に表示）
 const GYM_A_LIFTS = ["benchM", "deckfly", "latpull", "pulleyrow", "machcurl", "situp"];
@@ -691,7 +695,7 @@ function loadRank(load) {
   return m ? Number(m[1]) : NaN;
 }
 const fmtLoad = (l) => { const s = String(l ?? ""); return /^[+＋]\d/.test(s) ? s + "kg" : s; };
-const liftRepsSets = (r) => r.sets != null ? `${r.reps}×${r.sets}` : `${r.reps}回`;
+const liftRepsSets = (r) => r.reps == null ? "" : r.sets != null ? `${r.reps}×${r.sets}` : `${r.reps}回`; // 回数なし（用紙読取で重量のみ）の表示にも耐える
 // 同種目の直前レコード（beforeKey/beforeIdxを渡すとその記録より前だけを見る。省略で全期間の最新＝プリセット用）
 function liftPrev(ex, beforeKey, beforeIdx) {
   let prev = null;
@@ -1155,8 +1159,18 @@ async function extractHealthData(base64, mediaType) {
 - rhr: 安静時心拍(bpm)
 - steps: 歩数（整数。「20,321歩」→20321）
 - aerobic: 有酸素運動の記録画面か（「ランニング」「サイクリング」「ハイキング」等の有酸素系アクティビティ名と、時間・平均心拍などが表示された画面ならtrue。「ウォーキング」「散歩」は運動実績として数えない方針のためnull。「ワークアウト」「筋トレ」「ウェイト」等の筋力トレーニング画面、体組成・睡眠・日次サマリー画面もnull）
-写っていない・読み取れない項目はnull。睡眠スコアは不要。出力はJSONオブジェクトのみ：
-{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull,"steps":数値orNull,"aerobic":真偽値orNull}
+写っていない・読み取れない項目はnull。睡眠スコアは不要。
+
+例外：写真が「ジムの筋トレ記録用紙」（紙の表。左に種目名と1s/2s/3sの3行、右に日付列、手書きの重量・回数）の場合は、上記の項目はすべてnullにして "gym" に以下を返す：
+- sheet: 用紙上部に丸で囲まれた記号（"A"または"B"）。見えなければ種目から推定（ベンチプレス・デッキフライ・ラットプルダウン等→"A"／バックプレス・サイドレイズ・スクワット・レッグカール等→"B"）
+- date: 記入済みのいちばん右（＝最新）の日付列の日付（"11/15"形式。読めなければnull）
+- rows: その最新列について、種目ごとに最下段の記入済みセット（3s=90%の行。3sが空欄なら記入のある最後の行）を1件：
+  {"name":"用紙の種目名","load":数値,"unit":"kg"または"段"または"枚","reps":数値orNull}
+  単位は用紙の印字・手書きに従う。斜線で消された種目・その列が空欄の種目は含めない。手書き数字が読めない値はその種目ごと省く（推測で埋めない）。
+ジム用紙でなければ "gym" はnull。
+
+出力はJSONオブジェクトのみ：
+{"weight":数値orNull,"muscle":数値orNull,"fatpct":数値orNull,"sleep":数値orNull,"bedtime":文字列orNull,"waketime":文字列orNull,"rhr":数値orNull,"steps":数値orNull,"aerobic":真偽値orNull,"gym":オブジェクトorNull}
 前置き・説明・コードフェンス不要。` },
     ] }],
   });
@@ -1167,7 +1181,60 @@ async function extractHealthData(base64, mediaType) {
            sleep: num(o.sleep), bedtime: tm(o.bedtime), waketime: tm(o.waketime),
            rhr: o.rhr != null && !isNaN(Number(o.rhr)) ? Math.round(Number(o.rhr)) : null,
            steps: o.steps != null && !isNaN(Number(o.steps)) ? Math.round(Number(o.steps)) : null,
-           aerobic: o.aerobic === true };
+           aerobic: o.aerobic === true,
+           gym: (o.gym && typeof o.gym === "object" && Array.isArray(o.gym.rows)) ? o.gym : null };
+}
+
+// ジム記録用紙の種目名→挙上ID（表記ゆれは正規表現で吸収。判定順に意味がある：プレスダウン→ベンチプレスの誤マッチ防止等）
+const GYM_SHEET_MAP = [
+  [/プレス.?ダウン/, "pressdown"],
+  [/バック.?エクステンション/, "backext"],
+  [/バック.?プレス/, "backpress"],
+  [/ベンチ/, "benchM"],
+  [/デッキ|フライ/, "deckfly"],
+  [/ラット/, "latpull"],
+  [/レッグ.?カール/, "legcurl"],
+  [/レッグ.?エクステ/, "legext"],
+  [/コンセントレーション|ダンベル.?カール/, "conccurl"],
+  [/カール/, "machcurl"],
+  [/シット/, "situp"],
+  [/サイド/, "sideraise"],
+  [/スクワット/, "squat"],
+  [/カーフ/, "calfgym"],
+  [/プーリー|ロウ|ロー/, "pulleyrow"],
+];
+// 読み取ったジム用紙を記録に反映：挙上（最終セットのみ）＋act＋メニューチェック。対象日は用紙の最新列の日付（読めなければ表示中の日）
+function applyGymSheet(gym) {
+  let key = toKey(cursor);
+  const today = logicalToday();
+  const dm = /^(\d{1,2})\/(\d{1,2})$/.exec(String(gym.date || "").trim());
+  if (dm) {
+    let y = today.getFullYear();
+    if (new Date(y, Number(dm[1]) - 1, Number(dm[2])) > today) y--; // 年末年始またぎ：未来日になるなら前年
+    key = toKey(new Date(y, Number(dm[1]) - 1, Number(dm[2])));
+  }
+  const day = getDay(key);
+  const stamp = toKey(today) === key ? nowHHMM() : null;
+  const recs = [], checkIds = [];
+  let dup = 0;
+  for (const row of gym.rows) {
+    const hit = GYM_SHEET_MAP.find(([re]) => re.test(String(row.name || "")));
+    if (!hit || row.load == null || isNaN(Number(row.load))) continue;
+    const unit = ["kg", "段", "枚"].includes(row.unit) ? row.unit : "kg";
+    const ex = hit[1];
+    if ((day.lifts || []).some((r) => r.ex === ex)) { dup++; continue; } // 同じ日に既記録なら二重登録しない（再アップ対策）
+    recs.push({ ex, load: `${Number(row.load)}${unit}`, reps: row.reps != null && !isNaN(Number(row.reps)) ? Number(row.reps) : null, sets: null, t: stamp });
+    checkIds.push(ex);
+  }
+  if (!recs.length) return dup ? { key, n: 0, dup } : null;
+  const patch = { lifts: (day.lifts || []).concat(recs) };
+  const act = gym.sheet === "B" ? "trainGymB" : gym.sheet === "A" ? "trainGymA" : null;
+  if (act && !dayActs(day).includes(act)) patch.acts = dayActs(day).concat(act);
+  const w = Object.assign({ checks: [], note: "" }, day.workout || {});
+  const add = checkIds.filter((id) => !w.checks.includes(id));
+  if (add.length) { w.checks = w.checks.concat(add); patch.workout = w; }
+  updateDay(key, patch);
+  return { key, n: recs.length, act };
 }
 
 // 写真を縮小してbase64化（通信量・コスト対策）
@@ -1424,7 +1491,11 @@ async function onInbodyPicked(file) {
   try {
     const { base64, mediaType } = await resizeImage(file);
     const r = await extractHealthData(base64, mediaType);
-    if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null && r.steps == null && !r.aerobic) {
+    if (r.gym) {
+      const res = applyGymSheet(r.gym);
+      errMsg = !res ? "用紙の数値を読み取れませんでした。手書き数字がはっきり写るように撮り直してみてください。"
+        : res.n === 0 ? "この用紙の内容はすでに記録済みです（二重登録はしていません）。" : "";
+    } else if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null && r.steps == null && !r.aerobic) {
       errMsg = "数値を読み取れませんでした。数値が写った画面で撮り直してみてください。";
     } else {
       const key = toKey(cursor);
@@ -2055,7 +2126,7 @@ function renderLog() {
         <div style="flex:1;font-size:15px;color:var(--muted)">
           ${(day.muscle != null || day.fatpct != null || day.bedtime || day.waketime || day.rhr != null || day.steps != null)
             ? `<span style="color:var(--text)">${day.muscle != null ? `筋量 <b class="mono" style="color:var(--green)">${day.muscle}</b>kg` : ""}${day.fatpct != null ? ` ・体脂肪 <b class="mono" style="color:var(--ice)">${day.fatpct}</b>%` : ""}${(day.bedtime || day.waketime) ? `<br>睡眠 <b class="mono" style="color:var(--violet)">${day.bedtime ?? "—"}〜${day.waketime ?? "—"}</b>（目標2:30〜9:30）` : ""}${day.rhr != null ? ` ・安静時心拍 <b class="mono" style="color:var(--ice)">${day.rhr}</b>bpm` : ""}${day.steps != null ? `<br>歩数 <b class="mono" style="color:var(--text)">${day.steps.toLocaleString()}</b>歩<span style="color:var(--muted)">（参考表示）</span>` : ""}</span>`
-            : "体組成計や睡眠トラッカーのスクショから、体重・筋量・体脂肪・睡眠・就寝起床・心拍・歩数を自動記録します。"}
+            : "体組成計や睡眠トラッカーのスクショから、体重・筋量・体脂肪・睡眠・就寝起床・心拍・歩数を自動記録します。ジムの記録用紙（紙）の写真も読み取れます（最新の記入列の最終セットを挙上に記録・A/B自動判定）。"}
         </div>
         ${(day.weight != null || day.muscle != null || day.fatpct != null || day.sleep != null || day.bedtime || day.waketime || day.rhr != null || day.steps != null)
           ? `<button class="delbtn" data-measdel title="この日の測定データを削除">🗑</button>` : ""}
