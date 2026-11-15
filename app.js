@@ -76,6 +76,48 @@ const fmt1 = (v) => (v == null || v === "" || isNaN(Number(v))) ? (v ?? "") : Nu
 function carbBarColor(carbs, floor) {
   return carbs >= floor ? "var(--green)" : carbs > 0 ? "var(--ice)" : "var(--muted)";
 }
+// v5.4 §1：Cは「下限」でなく「適量帯」の両側表示（片側表示が帯の上に出る食べ方を誘発していた）。
+// 帯上端＝下端×1.16を10g丸め（例：310→360、372→430）。表示用でありハードリミットではない。判定エンジン・係数は無変更
+const carbCapOf = (floor) => Math.round(floor * 1.16 / 10) * 10;
+// v5.4 §2：増える5条件（直近7日・94日分の相関分析で確定）。消灯も事実のみ・責めない
+function thriveLights(anchorKey) {
+  const [y, m, d] = anchorKey.split("-").map(Number);
+  const days = [];
+  for (let i = 0; i < 7; i++) days.push(toKey(new Date(y, m - 1, d - i)));
+  const G = goalsFor(anchorKey);
+  let cSum = 0, fSum = 0, capSum = 0, cN = 0;
+  for (const k of days) {
+    const dd = data[k];
+    if (!dd || !(dd.foods || []).length) continue;
+    const floor = isActiveDay(dd) ? G.cTrain : G.cRest;
+    cSum += sumC(dd); fSum += floor; capSum += carbCapOf(floor); cN++;
+  }
+  const cAvg = cN ? Math.round(cSum / cN) : null;
+  const cOn = cN > 0 && cSum / cN >= fSum / cN && cSum / cN <= capSum / cN;
+  const tN = days.filter((k) => {
+    const dd = data[k];
+    return dd && ((dayActs(dd).some((a) => a.indexOf("trainGym") === 0 || a.indexOf("home") === 0) && checkedCount(dd) > 0) || dayActs(dd).includes("climb"));
+  }).length;
+  const pN = days.filter((k) => data[k] && (data[k].foods || []).length && sumP(data[k]) >= G.pBase).length;
+  const sl = days.map((k) => data[k] && data[k].sleep).filter((v) => v != null && v !== "" && !isNaN(Number(v))).map(Number);
+  const sAvg = sl.length ? sl.reduce((a, b) => a + b, 0) / sl.length : null;
+  const waists = [];
+  for (const k of Object.keys(data).sort()) {
+    if (!isDayKey(k) || k > anchorKey) continue;
+    const w = data[k] && data[k].meas && data[k].meas.waist;
+    if (w != null && w !== "" && !isNaN(Number(w))) waists.push({ k, v: Number(w) });
+  }
+  const last = waists[waists.length - 1] || null, prevW = waists[waists.length - 2] || null;
+  const within8 = !!last && last.k >= toKey(new Date(y, m - 1, d - 7));
+  const waistOn = within8 && (!prevW || last.v - prevW.v < 2);
+  return {
+    c: { on: cOn, fact: cAvg == null ? "記録なし" : `${cAvg}g` },
+    t: { on: tN >= 2, fact: `${tN}回` },
+    p: { on: pN >= 5, fact: `${pN}/7` },
+    s: { on: sl.length >= 3 && sAvg >= 7, na: sl.length < 3, fact: sl.length < 3 ? `記録${sl.length}日` : `${sAvg.toFixed(1)}h` },
+    w: { on: waistOn, fact: last ? last.k.slice(5).replace("-", "/") : "未測定" },
+  };
+}
 // 日区分：筋トレ日（ジム/自宅/旧筋トレの1種目以上チェック）／高強度日（登攀・柔術・山行）／休養日
 function dayKind(dd) {
   if (dayActs(dd).some(isTrainAct) && checkedCount(dd) > 0) return "train";
@@ -1049,7 +1091,7 @@ function judgmentExportText(j) {
     `F（体脂肪率変化pt/月）：${j.F ?? "データ不足"}`,
     `L（主要4種目の前進数）：${j.L}`,
     `weight_ref：${G.wr ?? "—"}kg／係数：P ${cfg.coef.p_base}/${cfg.coef.p_training}・C ${cfg.coef.c_rest}/${cfg.coef.c_training}`,
-    `現在の目標：P ${G.pBase}/${G.pTrain}g・C下限 ${G.cRest}/${G.cTrain}g`,
+    `現在の目標：P ${G.pBase}/${G.pTrain}g・C適量帯下端 ${G.cRest}/${G.cTrain}g`,
     `判定基準：STOP=体重${cfg.exit_lines.weight_stop}kg or 体脂肪${cfg.exit_lines.fat_stop}%／減速=W>+0.7 or F>+0.3×2ヶ月／加速=W<+0.5 かつ F≤0 かつ L≥2`,
   ].join("\n");
 }
@@ -1175,7 +1217,7 @@ async function fetchBakao(key) {
 
 対象日（${dateLabel}・${actLabel(day)}＝${DAY_KIND_LABEL[dayKind(day)]}）のデータ：
 - たんぱく質：${total}g（目標${target}g${total < target ? `・残り${target - total}g` : "・到達"}）
-- 糖質：${carbs}g（下限${active ? G.cTrain : G.cRest}g${carbs < (active ? G.cTrain : G.cRest) ? `・下限まであと${(active ? G.cTrain : G.cRest) - carbs}g` : "・下限達成"}）
+- 糖質：${(() => { const f = active ? G.cTrain : G.cRest, cp = carbCapOf(f); return `${carbs}g（適量帯${f}〜${cp}g${carbs < f ? `・帯まであと${f - carbs}g` : carbs > cp ? "・今日は満タン、ここからは明日の分" : "・帯内⛽"}）`; })()}
 - 歩数：${day.steps != null ? day.steps.toLocaleString() + "歩（参考値。目標や警告には使わない。ただし休養日で15,000歩を超えている日は、糖質+40〜50g程度の追加補給に軽く触れてよい。責めない・警告調にしない）" : "記録なし"}
 - サプリ：クレアチン${creatineOn(day) ? "済" : "未"}／ビタミンD${vitdOn(day) ? "済" : "未"}（クレアチン3〜5gは毎日方針。未の日はごく軽く一言リマインドしてよい。説教はしない）
 - Zone2有酸素：本日${dayActs(day).includes("aerobic") ? "実施" : "なし"}／今週の速歩等 ${weeklyZone2(key)}分（上限${GOALS.zone2Max}分・増量優先。上限を上回っているときだけ「残りは回復に」と軽く言う。未実施は全く問題にしない。糖質目標には影響しない）
@@ -1782,9 +1824,10 @@ function renderLog() {
   // §3 糖質は下限管理：足りない日だけ気にする。多い分は警告しない（増量フェーズ）
   const kind = dayKind(day);
   const carbFloor = active ? G.cTrain : G.cRest;
+  const carbCap = carbCapOf(carbFloor); // 適量帯上端（表示用・ハードリミットではない）
   const carbColor = carbBarColor(carbs, carbFloor);
-  const carbPct = Math.min(carbFloor > 0 ? carbs / carbFloor : 0, 1) * 100;
-  const carbDiff = carbs < carbFloor ? `下限まであと ${carbFloor - carbs}g` : `下限達成${carbs > carbFloor ? ` +${carbs - carbFloor}g` : ""}`;
+  const carbPct = Math.min(carbCap > 0 ? carbs / carbCap : 0, 1) * 100; // ゲージは帯上端を100%に
+  const carbDiff = carbs < carbFloor ? `適量帯まであと ${carbFloor - carbs}g` : "満タン⛽";
   // 21時以降（深夜0〜3時も同じ論理日）で下限まで50g以上残っていたら、責めないリマインドを一言
   const nowH = new Date().getHours();
   const carbRemind = isToday && (nowH >= 21 || nowH < 3) && (carbFloor - carbs) >= 50;
@@ -1808,7 +1851,7 @@ function renderLog() {
       const detail = airflowOpen ? `
         <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6">
           weight_ref <b class="mono" style="color:var(--text)">${G.wr ?? "—"}</b>kg（月曜更新の7日平均）
-          ／ 今週の目標：P <b class="mono">${G.pBase}/${G.pTrain}</b>g・C下限 <b class="mono">${G.cRest}/${G.cTrain}</b>g
+          ／ 今週の目標：P <b class="mono">${G.pBase}/${G.pTrain}</b>g・C適量帯 <b class="mono">${G.cRest}〜${carbCapOf(G.cRest)}/${G.cTrain}〜${carbCapOf(G.cTrain)}</b>g
           ／ 係数：C <b class="mono">${cfg.coef.c_rest}/${cfg.coef.c_training}</b>g/kg
           ${last ? `<br>前回判定（${last.month}）：${VERDICT_LABEL[last.verdict]}／W ${last.W ?? "—"}・F ${last.F ?? "—"}・L ${last.L}` : ""}
         </div>` : "";
@@ -1834,7 +1877,7 @@ function renderLog() {
         <div class="setrow" style="margin-top:10px">
           ${j.verdict === "stop"
             ? `<span style="font-size:13px;color:var(--amber)">停止ライン（${el.weight_stop}kg／${el.fat_stop}%）。チーム会議で中間評価を。</span>`
-            : `<button class="setbtn" data-bulkapprove="${j.month}">承認する（C下限 ${delta > 0 ? "+" : "−"}${Math.abs(delta)}g/kg${gDelta}）</button>`}
+            : `<button class="setbtn" data-bulkapprove="${j.month}">承認する（C帯 ${delta > 0 ? "+" : "−"}${Math.abs(delta)}g/kg${gDelta}）</button>`}
           <button class="setbtn ghost" data-bulkconsult="${j.month}">チームと相談（データ書き出し）</button>
         </div>
       </div></div>`;
@@ -1928,16 +1971,18 @@ function renderLog() {
       const carbCard = (main) => `
     <div class="card carbcard">
       <div style="display:flex;align-items:baseline;justify-content:space-between">
-        <div style="font-size:14px;color:var(--muted)">糖質（下限 ${carbFloor}g／${DAY_KIND_LABEL[kind]}）</div>
+        <div style="font-size:14px;color:var(--muted)">糖質（適量帯 ${carbFloor}〜${carbCap}g／${DAY_KIND_LABEL[kind]}）</div>
         <div><span class="mono" style="font-size:${main ? 34 : 26}px;font-weight:700;color:${carbColor}">${carbs}</span><span class="mono" style="font-size:15px;color:var(--muted)"> g</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
         <div class="hbar" style="position:relative${main ? ";height:14px" : ""}">
+          <div style="position:absolute;left:${(carbFloor / carbCap * 100).toFixed(1)}%;right:0;top:0;bottom:0;background:var(--green);opacity:.18"></div>
           <div class="fill" data-carbfill style="width:${carbPct}%;background:${carbColor}"></div>
         </div>
         <span class="mono" style="flex-shrink:0;font-size:14px;color:${carbs >= carbFloor ? "var(--green)" : "var(--muted)"}">${carbDiff}</span>
       </div>
-      ${carbRemind ? `<div style="font-size:13px;color:var(--ice);margin-top:6px">下限まであと${carbFloor - carbs}g。おにぎり1個で+40gです。</div>` : ""}
+      ${carbs > carbCap ? `<div style="font-size:13px;color:var(--muted);margin-top:6px">今日は満タン。ここからは明日の分</div>` : ""}
+      ${carbRemind ? `<div style="font-size:13px;color:var(--ice);margin-top:6px">適量帯まであと${carbFloor - carbs}g。おにぎり1個で+40gです。</div>` : ""}
       ${(() => {
         // v4.2 §1 c_post_training：筋トレ日のみ、最後の挙上記録から2時間以内のCを集計表示（未達を責めない・事実と目安のみ）
         if (kind !== "train") return "";
@@ -2062,11 +2107,19 @@ function renderLog() {
     ${(() => {
       // §4-4 測定ティッカー（③ストックへの入口。ホームでは1行だけ・リマインドは日曜夜のみ）
       const done = measThisWeek(key);
-      const items = [["握力", done.grip], ["膝壁", done.knee], ["ハング", done.hang]];
+      // v5.4 §3：腹囲・胸囲も週1項目に（測定条件つき。入力は「腹囲 80 胸囲 95」でmeas.waist/chestへ）
+      const w = weekInfo(key);
+      let waistDone = false;
+      for (let i = 0; i < w.dayN; i++) {
+        const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
+        if (dd && dd.meas && (dd.meas.waist != null || dd.meas.chest != null)) { waistDone = true; break; }
+      }
+      const items = [["握力", done.grip], ["膝壁", done.knee], ["ハング", done.hang], ["腹囲", waistDone]];
       const allDone = items.every(([, d]) => d);
       const now = new Date();
       const sundayNight = isToday && now.getDay() === 0 && now.getHours() >= 18 && !allDone;
-      return `<button class="pacesum ${allDone ? "done" : ""}" data-measjump style="margin-top:8px"><span class="txt">📏 今週の測定：${items.map(([l, d]) => `${l} ${d ? "✓" : "未"}`).join(" ／ ")}${sundayNight ? "　— 今夜どれか1つどうぞ" : ""}</span><span class="more">測定 ›</span></button>`;
+      return `<button class="pacesum ${allDone ? "done" : ""}" data-measjump style="margin-top:8px"><span class="txt">📏 今週の測定：${items.map(([l, d]) => `${l} ${d ? "✓" : "未"}`).join(" ／ ")}${sundayNight ? "　— 今夜どれか1つどうぞ" : ""}</span><span class="more">測定 ›</span></button>
+      ${sundayNight && !waistDone ? `<div class="walknote">📏 今日は腹囲・胸囲を測る日：朝・食前・へそ位置・力を抜いて（9/3基準と同条件）。「腹囲 80 胸囲 95」で記録できます。</div>` : ""}`;
     })()}
 
     <div class="foodlist">
@@ -2219,7 +2272,14 @@ function renderLog() {
           </div>`;
         }).join("")}
       </div>
-      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>` : ""}
+      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>
+      ${(() => {
+        // v5.4 §2：増える5条件の5灯（C→トレ→睡眠のデバッグ順を画面が教える。消灯も事実のみ）
+        const L = thriveLights(key);
+        const lamp = (x) => x.na ? "▫️" : x.on ? "🟢" : "⚪";
+        const onN = [L.c, L.t, L.p, L.s, L.w].filter((x) => x.on).length;
+        return `<div class="pacenote" style="margin-top:6px">🪽 増える5条件（直近7日・${onN}灯）：C${lamp(L.c)}${L.c.fact}・ト${lamp(L.t)}${L.t.fact}・P${lamp(L.p)}${L.p.fact}・眠${lamp(L.s)}${L.s.fact}・腹${lamp(L.w)}${L.w.fact}</div>`;
+      })()}` : ""}
     </div>`;
     })()}
 
@@ -2423,7 +2483,7 @@ function renderReview() {
     <div class="chartbox">
       <div class="seclabel">🍚 糖質の推移</div>
       ${carbChart(days, HG)}
-      <div class="chartnote">緑の破線＝休養日下限${HG.cRest}g／橙線＝筋トレ・高強度日下限${HG.cTrain}g（下限管理・上限なし）</div>
+      <div class="chartnote">緑の破線＝休養日の適量帯下端${HG.cRest}g／橙線＝筋トレ・高強度日の帯下端${HG.cTrain}g（帯上端はハードリミットではない）</div>
     </div>
     <div class="chartbox">
       <div class="seclabel">⚖️ 体重の推移</div>
@@ -2674,7 +2734,7 @@ function renderSettings() {
           <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・柔術・山行）から自動判定。有酸素（Zone2）トグルは週次実績の記録のみで糖質目標には影響しない（Fitbit等のワークアウト画面スクショを📊に読ませると自動ON）。<br>
           歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
           筋トレ：ジムA（押す＋引く）＋ジムB（脚）の週2マスト＋自宅＝量（+16kg回数）/重さ（+24kg少なく）/軽め（回復15分）を週1推奨で上積み（量↔重さは週替わり波状）。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
-          糖質目安：休養日250g・運動日330g（血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
+          糖質は適量帯で表示（体重連動・帯上端はハードリミットではない。血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
           データ保存：この端末＋（同期設定時）あなたのGitHub秘密Gist。Anthropic・GitHub以外の外部には何も送信しません。
         </div>
       </div>
