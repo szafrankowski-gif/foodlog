@@ -272,13 +272,15 @@ const MENU_NOTE = {
   homeC: "⛑ 家の日ゼロの週の最低保証ライン（5分）：両手スイング KB24 10×2＋加重懸垂（その週の番の重量）×2セット。記録はこのカードでOK。2週連続で落ちたら翌週はこの軽めの日から再起動",
 };
 
+// v5.4追補（2026-11-16・140日データ準拠）：習慣化が完了した食材（乳製品・果物・緑黄色野菜・卵）はチップから卒業し、
+// 直近28日で衰退した食材に枠を集中。判定はhit(f)（名前・タグ・catの複合）で行う
 const PACE = [
-  { key: "saba",  label: "鯖缶",         target: 3, color: "#5FC9DE" },
-  { key: "fish",  label: "生魚・別魚種", target: 1, color: "#5FC9DE" },
-  { key: "tuna",  label: "ツナ缶",       target: 2, color: "#9D8CE0" },
-  { key: "red",   label: "赤身肉",       target: 1, color: "#E08C8C" },
-  { key: "shell", label: "貝類",         target: 1, color: "#F0B458" },
-  { key: "liver", label: "鶏レバー",     target: 1, max: 2, color: "#C98C5F" },
+  { key: "saba",       label: "🐟 鯖缶・青魚", target: 2, color: "#5FC9DE", hit: (f) => !!f.omega3 || f.cat === "saba" },
+  { key: "nuts",       label: "🥜 ナッツ",     target: 3, color: "#C9A86C", hit: (f) => /ナッツ|アーモンド|くるみ|クルミ|胡桃|カシュー/.test(f.name || "") },
+  { key: "kinoko",     label: "🍄 きのこ",     target: 2, color: "#C98C5F", hit: (f) => /きのこ|キノコ|茸|しめじ|シメジ|舞茸|まいたけ|マイタケ|エリンギ|椎茸|しいたけ|シイタケ|えのき|エノキ|なめこ|マッシュルーム/.test(f.name || "") },
+  { key: "soy",        label: "🫘 納豆・豆腐", target: 3, color: "#9D8CE0", hit: (f) => /納豆|豆腐|厚揚げ|高野豆腐|豆乳|枝豆/.test(f.name || "") },
+  { key: "shellLiver", label: "🦪 貝・レバー", target: 1, color: "#F0B458", hit: (f) => f.cat === "shell" || f.cat === "liver" },
+  { key: "seaweed",    label: "🌿 海藻",       target: 3, color: "#7FD68B", hit: (f) => /わかめ|ワカメ|若布|海苔|のり佃煮|めかぶ|メカブ|もずく|モズク|ひじき|昆布/.test(f.name || "") },
 ];
 
 const SEED = {
@@ -548,10 +550,11 @@ function weekInfo(anchorKey) {
 }
 function pace7(anchorKey) {
   const w = weekInfo(anchorKey);
-  const counts = { saba: 0, fish: 0, tuna: 0, red: 0, shell: 0, liver: 0 };
+  const counts = {};
+  PACE.forEach((row) => { counts[row.key] = 0; });
   for (let i = 0; i < w.dayN; i++) {
     const dd = data[toKey(new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + i))];
-    ((dd && dd.foods) || []).forEach((f) => { if (f.cat && counts[f.cat] != null) counts[f.cat]++; });
+    ((dd && dd.foods) || []).forEach((f) => { for (const row of PACE) if (row.hit(f)) counts[row.key]++; });
   }
   return counts;
 }
@@ -1232,7 +1235,8 @@ ${(day.lifts && day.lifts.length) ? `- 本日の挙上記録：${day.lifts.map((
 ` : ""}${day.wrist ? `- 翌朝の手首：${day.wrist==="ok"?"違和感なし":"違和感あり"}
 ` : ""}- 食べたもの（時刻付き。血糖対策は総量でなく質とタイミング：時刻の偏り＝1食への糖質集中や、就寝2:30直前の重い食事があれば軽く触れてよい。時刻なしの品目は詮索しない）：${foodList}
 - 直近7日平均：${weekAvgFor(new Date(y, m - 1, d)) ?? "—"}g
-- 今週の食材ペース（月曜始まり・日曜締め、本日${weekInfo(key).dayN}日目）：鯖缶${pc.saba}/3、生魚${pc.fish}/1、ツナ${pc.tuna}/2、赤身${pc.red}/1、貝${pc.shell}/1、鶏レバー${pc.liver}/1〜2（レバーはビタミンA過剰回避のため週2が上限。週3以上のときだけ「今週はもう十分」と一言添える）（週前半の未達を責めない。週後半で残りが多い場合のみ軽く献立提案してよい）
+- 今週の食材ペース（月曜始まり・日曜締め、本日${weekInfo(key).dayN}日目・v5.4追補の6枠）：鯖缶・青魚${pc.saba}/2、ナッツ${pc.nuts}/3、きのこ${pc.kinoko}/2、納豆・豆腐${pc.soy}/3、貝・レバー${pc.shellLiver}/1、海藻${pc.seaweed}/3（鶏レバーはビタミンA過剰回避のため週2が上限。週3以上のときだけ「今週はもう十分」と一言添える）（乳製品・果物・緑黄色野菜・卵は習慣化済みのため枠から卒業＝言及不要）（週前半の未達を責めない。週後半で残りが多い場合のみ軽く献立提案してよい）
+- 朝の既定ルート：バナナ＋オートミール30g＋牛乳150ml（習慣接ぎ木）。${(() => { const w = weekInfo(key); const wk = toKey(w.start); let firstEver = null; for (const k of Object.keys(data).sort()) { if (!isDayKey(k)) continue; if (((data[k] || {}).foods || []).some((f) => /オートミール/.test(f.name || ""))) { firstEver = k; break; } } return firstEver && firstEver >= wk && firstEver <= key ? "今週オートミールが初登場（購入後140日でのデビュー）。一言祝ってよい（禁止語ルール内で・大げさにしない）" : "オートミールが登場した週は軽く触れてよい"; })()}
 
 出力：日本語で2〜3文の一言評価のみ。前置き・見出し・絵文字・マークダウン不要。`} ],
   });
@@ -2277,7 +2281,7 @@ function renderLog() {
           </div>`;
         }).join("")}
       </div>
-      <div class="pacenote">目安：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1・鶏レバー1〜2（50〜80g/回、上限あり）／週。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>
+      <div class="pacenote">目安：鯖缶・青魚2・ナッツ3・きのこ2・納豆/豆腐3・貝/レバー1（レバーは50〜80g/回・週2上限）・海藻3／週。乳製品・果物・緑黄色野菜・卵は習慣化済みのため卒業。月曜に0から再スタート、日曜が締め${wi.remain > 0 ? `（今週あと${wi.remain}日）` : "（今日が最終日）"}</div>
       ${(() => {
         // v5.4 §2：増える5条件の5灯（C→トレ→睡眠のデバッグ順を画面が教える。消灯も事実のみ）
         const L = thriveLights(key);
@@ -2739,7 +2743,7 @@ function renderSettings() {
           <b>v2＝実績ベース判定</b>：運動日/休養日は宣言でなく、その日の実績（筋トレ1種目以上チェック・登攀・柔術・山行）から自動判定。有酸素（Zone2）トグルは週次実績の記録のみで糖質目標には影響しない（Fitbit等のワークアウト画面スクショを📊に読ませると自動ON）。<br>
           歩数はスクショ📊から参考表示のみ（目標・警告には使わない。休養日で15,000歩超の日だけ補給の一言が出ます）。<br>
           筋トレ：ジムA（押す＋引く）＋ジムB（脚）の週2マスト＋自宅＝量（+16kg回数）/重さ（+24kg少なく）/軽め（回復15分）を週1推奨で上積み（量↔重さは週替わり波状）。サプリ確認：クレアチン（食事記録から自動チェック）・ビタミンD。<br>
-          糖質は適量帯で表示（体重連動・帯上端はハードリミットではない。血糖対策は質とタイミングで）。食材ペース：鯖缶3・生魚1〜2・ツナ2〜3・赤身1・貝1／週（月曜始まり・日曜締めの固定週）。<br>
+          糖質は適量帯で表示（体重連動・帯上端はハードリミットではない。血糖対策は質とタイミングで）。食材ペース：鯖缶・青魚2・ナッツ3・きのこ2・納豆/豆腐3・貝/レバー1・海藻3／週（月曜始まり・日曜締めの固定週。習慣化済みの乳製品・果物・緑黄色野菜・卵は枠から卒業）。<br>
           データ保存：この端末＋（同期設定時）あなたのGitHub秘密Gist。Anthropic・GitHub以外の外部には何も送信しません。
         </div>
       </div>
