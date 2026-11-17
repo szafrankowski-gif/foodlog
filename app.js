@@ -371,7 +371,23 @@ function load() {
   }
   migrateLiverCat();
   migrateLiftDup();
+  migrateLiftUnit();
   save();
+}
+// v5.4.3：ジム種目の負荷単位をマスタに合わせて修正（用紙読取が紙のkg印字を信じて「5kg」等で保存した記録を「5段」へ。数値は不変・冪等・_mは触らない）
+function migrateLiftUnit() {
+  for (const k of Object.keys(data)) {
+    if (!isDayKey(k)) continue;
+    const dd = data[k];
+    if (!dd || !Array.isArray(dd.lifts)) continue;
+    for (const r of dd.lifts) {
+      if (!r || !r.ex) continue;
+      const u = gymUnitOf(r.ex);
+      if (!u) continue;
+      const m = /^([\d.]+)(kg|段|枚)$/.exec(String(r.load ?? ""));
+      if (m && m[2] !== u) r.load = m[1] + u;
+    }
+  }
 }
 // v5.2.6：同一日の同一種目の挙上を1件に統合（上書き方式の導入前に追記された重複の清掃。冪等）。
 // 「同じ種目は1日に複数回やらない」運用前提。残すのは時刻がいちばん新しい記録＝最後の手入力（深夜0〜3時は同日の夜の続き扱い・時刻なしは負け・全く同じなら後の行）
@@ -747,6 +763,13 @@ const LIFT_DEF = [
   { id: "conccurl",  label: "ダンベルカール",   gym: true, loads: gymLoads("kg", 5, 30, 5) },
   { id: "backext",   label: "バックエクステ",   gym: true, loads: gymLoads("段", 1, 14, 1) },
 ];
+// ジム種目の正しい負荷単位（マスタのloadsから導出）。段・枚のマシンに用紙のkg印字が付いていても、この単位に正規化する
+const gymUnitOf = (ex) => {
+  const def = LIFT_DEF.find((e) => e.id === ex);
+  if (!def || !def.gym || !def.loads || !def.loads.length) return null;
+  const m = /^[\d.]+(.+)$/.exec(String(def.loads[0]));
+  return m ? m[1] : null;
+};
 // 挙上カードの種目チップを当日のactで絞る（ジム日はそのジムの種目、自宅系・act無しは自宅種目。カスタム種目は常に表示）
 const GYM_A_LIFTS = ["benchM", "deckfly", "latpull", "pulleyrow", "machcurl", "situp"];
 const GYM_B_LIFTS = ["legpress", "legcurl", "legext", "backpress", "sideraise", "pressdown", "calfgym"];
@@ -1322,8 +1345,9 @@ function applyGymSheet(gym) {
   for (const row of gym.rows) {
     const hit = GYM_SHEET_MAP.find(([re]) => re.test(String(row.name || "")));
     if (!hit || row.load == null || isNaN(Number(row.load))) continue;
-    const unit = ["kg", "段", "枚"].includes(row.unit) ? row.unit : "kg";
     const ex = hit[1];
+    // 単位は種目マスタを正とする：用紙の印字枠（kg）が段・枚のマシンにも付いていて、読取の単位は信用できない
+    const unit = gymUnitOf(ex) || (["kg", "段", "枚"].includes(row.unit) ? row.unit : "kg");
     if ((day.lifts || []).some((r) => r.ex === ex)) { dup++; continue; } // 同じ日に既記録なら二重登録しない（再アップ対策）
     recs.push({ ex, load: `${Number(row.load)}${unit}`, reps: row.reps != null && !isNaN(Number(row.reps)) ? Number(row.reps) : null, sets: null, t: stamp });
     checkIds.push(ex);
