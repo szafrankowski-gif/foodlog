@@ -633,6 +633,13 @@ const MEAS_DEF = [
   { key: "chest", label: "胸囲", unit: "cm", sides: false, better: "none", target: null,
     empty: "任意記録（「胸囲 95」で記録）",
     note: "腹囲とセットで見る増量の質の指標（胸囲が増えて腹囲が横ばいなら上半身に乗っている）。増減そのものは良し悪しにしない" },
+  // v5.4.4（2026-11-19）：部位別の成長メーター。BIAの筋量は全身合算で部位が見えないが、メジャーは部位別に答えを出す
+  { key: "arm", label: "上腕周囲", unit: "cm", sides: false, better: "up", target: null,
+    empty: "任意記録（「上腕 32」で記録）",
+    note: "部位別の成長メーター。朝・力を抜いて・一番太いところ・腕は下げたまま（条件を固定して比較する）" },
+  { key: "thigh", label: "大腿周囲", unit: "cm", sides: false, better: "up", target: null,
+    empty: "任意記録（「大腿 54」で記録）",
+    note: "部位別の成長メーター。脚トレ路線の成否をBIAより正確に裁定する。朝・力を抜いて・同じ高さで測る" },
 ];
 // 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
 // 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース不成立はmeasNoteに保存し測定ビューで分類可能に
@@ -640,9 +647,11 @@ const MEAS_DEF = [
 const EXERCISE_MEMO_RE = /^(ブルガリアン|TGU|ＴＧＵ|(?:片脚)?RDL|膝コロ|ステップアップ|ステップダウン|ワンハンドロウ|(?:スーツケース)?(?:マーチ|ホールド)|足上げプッシュアップ|プッシュアップ)/;
 function parseMeasText(text) {
   const t = text.trim();
-  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|懸垂|ディップス|片手スイング|(?:KB)?スイング|(?:ボックス)?ジャンプ|腹囲|胸囲|ブルガリアン|TGU|ＴＧＵ)/.exec(t);
+  const head = /^(握力|膝壁|ピストル箱?|(?:デッド)?ハング|懸垂|ディップス|片手スイング|(?:KB)?スイング|(?:ボックス)?ジャンプ|腹囲|胸囲|上腕|腕回り|腕周り|大腿|太もも|ブルガリアン|TGU|ＴＧＵ)/.exec(t);
   if (!head) return null;
-  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips", "懸垂": "pullup", "腹囲": "waist", "胸囲": "chest", "片手スイング": "swing1", "ブルガリアン": "bulg" }[head[1]]
+  const key = { "握力": "grip", "膝壁": "knee", "ディップス": "dips", "懸垂": "pullup", "腹囲": "waist", "胸囲": "chest",
+    "上腕": "arm", "腕回り": "arm", "腕周り": "arm", "大腿": "thigh", "太もも": "thigh",
+    "片手スイング": "swing1", "ブルガリアン": "bulg" }[head[1]]
     || (head[1].startsWith("ピストル") ? "box" : head[1].endsWith("スイング") ? "swing" : head[1].endsWith("ジャンプ") ? "jump" : /TGU|ＴＧＵ/.test(head[1]) ? "tgu" : "hang");
   const r = /右[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t), l = /左[\s　]*(\d{1,3}(?:\.\d+)?)/.exec(t);
   const nums = (t.slice(head[1].length).match(/\d{1,3}(?:\.\d+)?/g) || []).map(Number);
@@ -684,9 +693,19 @@ function parseMeasText(text) {
     if (/(\d{1,3}(?:\.\d+)?)[\s　]*(?:kg|キロ)/.test(t)) return { wnote: t };
     if (!nums.length) return { note: t };
     meas.swing = nums[0];
-  } else if (key === "jump" || key === "waist" || key === "chest") {
+  } else if (key === "jump") {
     if (!nums.length) return { note: t };
-    meas[key] = nums[0];
+    meas.jump = nums[0];
+  } else if (key === "waist" || key === "chest" || key === "arm" || key === "thigh") {
+    // 周囲系は1行に複数項目を許す（「腹囲 80 胸囲 95」「上腕 32 大腿 54」）。キーワードごとに直後の数値を拾う
+    const MAP = { "腹囲": "waist", "胸囲": "chest", "上腕": "arm", "腕回り": "arm", "腕周り": "arm", "大腿": "thigh", "太もも": "thigh" };
+    const re = /(腹囲|胸囲|上腕|腕回り|腕周り|大腿|太もも)[\s　]*(\d{1,3}(?:\.\d+)?)/g;
+    let mm, found = false;
+    while ((mm = re.exec(t))) { meas[MAP[mm[1]]] = Number(mm[2]); found = true; }
+    if (!found) {
+      if (!nums.length) return { note: t };
+      meas[key] = nums[0];
+    }
   } else if (key === "hang") {
     if (!nums.length) return { note: t };
     meas.hang = nums[0];
