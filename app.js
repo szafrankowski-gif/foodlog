@@ -636,10 +636,10 @@ const MEAS_DEF = [
   // v5.4.4（2026-11-19）：部位別の成長メーター。BIAの筋量は全身合算で部位が見えないが、メジャーは部位別に答えを出す
   { key: "arm", label: "上腕周囲", unit: "cm", sides: false, better: "up", target: null,
     empty: "任意記録（「上腕 32」で記録）",
-    note: "部位別の成長メーター。朝・力を抜いて・一番太いところ・腕は下げたまま（条件を固定して比較する）" },
+    note: "部位別の成長メーター。月1目安（腹囲の週1とは別周期）。条件：朝・力を抜く・腕は下げたまま・最大周囲" },
   { key: "thigh", label: "大腿周囲", unit: "cm", sides: false, better: "up", target: null,
     empty: "任意記録（「大腿 54」で記録）",
-    note: "部位別の成長メーター。脚トレ路線の成否をBIAより正確に裁定する。朝・力を抜いて・同じ高さで測る" },
+    note: "部位別の成長メーター。脚トレ路線の成否をBIAより正確に裁定する。月1目安。条件：朝・立位・お尻の付け根から指4本下" },
 ];
 // 自然文の測定入力：「握力 右44 左44」「膝壁 右9 左8.5」「ピストル箱 右40 左45」「ハング 35秒」
 // 数値2つ=右・左の順。1つ=左右同値（片側種目hangは1つ）。パース不成立はmeasNoteに保存し測定ビューで分類可能に
@@ -815,6 +815,20 @@ function loadRank(load) {
   return m ? Number(m[1]) : NaN;
 }
 const fmtLoad = (l) => { const s = String(l ?? ""); return /^[+＋]\d/.test(s) ? s + "kg" : s; };
+// v5.4追補2 §1：段・枚マシンの実重量換算（参考表示専用。進歩判定には使わない＝判定は従来どおり枚数・段数の増加のみ）。
+// レッグプレスはジム実測（2026-11-19・カード余白の書き込み）。他マシンの実測が手に入り次第この表に同形式で追加する
+const LIFT_CONV = {
+  legpress: { unit: "枚", kg: (n) => 21.6 + (n - 1) * 14.4 }, // 1枚=21.6kg・以降1枚ごとに+14.4kg
+};
+// 「4枚（64.8kg）」の参考表示つき負荷表記。換算情報がない種目はfmtLoadそのまま
+function fmtLoadConv(ex, load) {
+  const base = fmtLoad(load);
+  const cv = LIFT_CONV[ex];
+  if (!cv) return base;
+  const m = new RegExp("^([\\d.]+)" + cv.unit + "$").exec(String(load ?? ""));
+  if (!m) return base;
+  return `${base}（${Math.round(cv.kg(Number(m[1])) * 10) / 10}kg）`;
+}
 const liftRepsSets = (r) => r.reps == null ? "" : r.sets != null ? `${r.reps}×${r.sets}` : `${r.reps}回`; // 回数なし（用紙読取で重量のみ）の表示にも耐える
 // 同じ日の同一種目は1件＝手入力は上書き（同じ種目を1日に複数回やらない運用）。無ければ末尾に追加。
 // 上書き対応前に積まれた同一種目の重複行も、このときまとめて1件に畳む
@@ -878,7 +892,7 @@ function liftPrevLine(liftId, beforeKey) {
   const def = liftMaster().find((x) => x.id === liftId);
   // ジム種目は記録のみ＝前進の推奨（目安）は出さない（v5.2 §5）
   const parts = (def && def.gym) ? [] : liftHintParts(def, hit.r);
-  return `<div style="font-size:12.5px;margin-top:3px;line-height:1.5"><span style="color:var(--muted)">前回</span> <span class="mono" style="color:var(--text)">${esc(hit.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(hit.r.load))} ${esc(liftRepsSets(hit.r))}</span>${parts.length ? `　<span style="color:var(--muted)">目安</span> <span class="mono" style="color:var(--text)">${esc(parts.join(" / "))}</span>` : ""}</div>`;
+  return `<div style="font-size:12.5px;margin-top:3px;line-height:1.5"><span style="color:var(--muted)">前回</span> <span class="mono" style="color:var(--text)">${esc(hit.k.slice(5).replace("-", "/"))} ${esc(fmtLoadConv(liftId, hit.r.load))} ${esc(liftRepsSets(hit.r))}</span>${parts.length ? `　<span style="color:var(--muted)">目安</span> <span class="mono" style="color:var(--text)">${esc(parts.join(" / "))}</span>` : ""}</div>`;
 }
 // 前進判定：重量↑ or 同重量で回数↑ or 同重量同回数でセット↑ → up。全て同値 → keep。下回るときはnull＝何も言わない
 function judgeLift(rec, prev) {
@@ -1921,6 +1935,30 @@ function renderLog() {
           W 体重ペース：<b class="mono" style="color:var(--text)">${j.W ?? "—"}</b> kg/月（減速&gt;+0.7／加速&lt;+0.5）<br>
           F 体脂肪変化：<b class="mono" style="color:var(--text)">${j.F ?? "—"}</b> pt/月（減速は+0.3が2ヶ月連続／加速はF≤0）<br>
           L 挙上前進：<b class="mono" style="color:var(--text)">${j.L}</b>/4種目（加速はL≥2）<br>
+          ${(() => {
+            // v5.4追補2 §2：周径囲（上腕・大腿）は月1周期。判定時に前回値との差分を併記し、当月未測定なら1行だけ促す
+            const end = toKey(monthEnd(j.month)), start = j.month + "-01";
+            const parts = [];
+            let anyThisMonth = false, anyEver = false;
+            for (const [f, label] of [["arm", "上腕"], ["thigh", "大腿"]]) {
+              let cur = null, prevV = null;
+              for (const k of Object.keys(data).sort()) {
+                if (!isDayKey(k) || k > end) continue;
+                const v = data[k] && data[k].meas && data[k].meas[f];
+                if (v == null || v === "" || isNaN(Number(v))) continue;
+                if (k >= start) cur = Number(v); else prevV = Number(v);
+              }
+              if (cur == null && prevV == null) continue;
+              anyEver = true;
+              if (cur == null) continue;
+              anyThisMonth = true;
+              const d = prevV != null ? Math.round((cur - prevV) * 10) / 10 : null;
+              parts.push(`${label} ${prevV != null ? `${prevV}→` : ""}${cur}cm${d != null ? `（${d >= 0 ? "+" : ""}${d}）` : ""}`);
+            }
+            if (parts.length) return `周径囲：<b class="mono" style="color:var(--text)">${parts.join(" ／ ")}</b><br>`;
+            if (anyEver && !anyThisMonth) return `<span style="font-size:12px">今月の周径囲は？（上腕・大腿は月1目安。「上腕 32 大腿 54」で記録）</span><br>`;
+            return "";
+          })()}
           <span style="font-size:12px">エネルギーは参考値の扱い：推定TDEE＋200〜250kcal相当を係数に織り込み済み（目標にはしない）</span>
         </div>
         <div class="setrow" style="margin-top:10px">
@@ -2091,7 +2129,7 @@ function renderLog() {
           : j && j.keep ? `<span style="font-size:13px;color:var(--muted);flex-shrink:0">前回と同じ（維持）</span>` : "";
         return `<div data-liftrow="${i}" title="長押しで削除" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;user-select:none;-webkit-user-select:none;cursor:pointer">
           <span class="mono" style="font-size:13px;color:var(--muted);flex-shrink:0">${r.t ? esc(r.t) : "--:--"}</span>
-          <span style="font-size:15px;min-width:0">${esc(liftLabel(r.ex))} <b class="mono">${esc(fmtLoad(r.load))} ${esc(liftRepsSets(r))}</b></span>
+          <span style="font-size:15px;min-width:0">${esc(liftLabel(r.ex))} <b class="mono">${esc(fmtLoadConv(r.ex, r.load))} ${esc(liftRepsSets(r))}</b></span>
           ${jTxt}
         </div>`;
       }).join("");
@@ -2124,7 +2162,7 @@ function renderLog() {
         </div>
         ${exDef ? `
         <div style="font-size:12.5px;color:var(--muted);padding:7px 2px 0;line-height:1.7">${prevInfo
-          ? `前回：<span class="mono" style="color:var(--text)">${esc(prevInfo.k.slice(5).replace("-", "/"))} ${esc(fmtLoad(prevInfo.r.load))} ${esc(liftRepsSets(prevInfo.r))}</span>${presetIsPrev ? "（選択済み）" : ""}${nextHint}<br>${exDef.gym ? "負荷は指導員の指示どおりでOK（最終セットのみ記録）" : "疲労が残る日は一段軽くするのも正しい調整です"}`
+          ? `前回：<span class="mono" style="color:var(--text)">${esc(prevInfo.k.slice(5).replace("-", "/"))} ${esc(fmtLoadConv(liftEx, prevInfo.r.load))} ${esc(liftRepsSets(prevInfo.r))}</span>${presetIsPrev ? "（選択済み）" : ""}${nextHint}<br>${exDef.gym ? "負荷は指導員の指示どおりでOK（最終セットのみ記録）" : "疲労が残る日は一段軽くするのも正しい調整です"}`
           : ((day.lifts || []).some((r) => r && r.ex === liftEx) ? "今日が初回の記録です（記録し直すと上書きされます）" : "この種目は初記録です")}</div>
         <div class="movechips" style="padding:6px 0 0">
           <span class="mclabel">重さ</span>
