@@ -1173,16 +1173,24 @@ const NUTRITION_RULES = `各品目について次を判定：
 async function callApi(body) {
   const key = apiKey();
   if (!key) throw new Error("NO_KEY");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify(body),
+      // 応答が宙に浮いてbusyのまま入力不能になるのを防ぐ（モバイル回線でfetchが返らないことがある）
+      signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(120000) : undefined,
+    });
+  } catch (e) {
+    if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error("応答が返ってこなかったため打ち切りました。もう一度お試しください");
+    throw e;
+  }
   let json;
   try { json = await res.json(); } catch (e) { throw new Error(`HTTP ${res.status}（応答を解釈できません）`); }
   if (json.error) throw new Error(`HTTP ${res.status}：${json.error.message || json.error.type || "APIエラー"}`);
