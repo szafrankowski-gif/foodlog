@@ -1328,7 +1328,7 @@ async function extractHealthData(base64, mediaType) {
 
 例外：写真が「ジムの筋トレ記録用紙」（紙の表。左に種目名と1s/2s/3sの3行、右に日付列、手書きの重量・回数）の場合は、上記の項目はすべてnullにして "gym" に以下を返す：
 - sheet: 用紙上部に丸で囲まれた記号（"A"または"B"）。見えなければ種目から推定（ベンチプレス・デッキフライ・ラットプルダウン等→"A"／バックプレス・サイドレイズ・スクワット・レッグカール等→"B"）
-- date: 記入済みのいちばん右（＝最新）の日付列の日付（"11/15"形式。読めなければnull）
+- date: 記入済みのいちばん右（＝最新）の日付列の日付（"11/15"形式）。手書きのため「1」「4」「7」などの見分けは慎重に。読めない・自信が持てなければnull（nullなら今日の分として扱う）
 - rows: その最新列について、種目ごとに最下段の記入済みセット（3s=90%の行。3sが空欄なら記入のある最後の行）を1件：
   {"name":"用紙の種目名","load":数値,"unit":"kg"または"段"または"枚","reps":数値orNull}
   単位は用紙の印字・手書きに従う。斜線で消された種目・その列が空欄の種目は含めない。手書き数字が読めない値はその種目ごと省く（推測で埋めない）。
@@ -1672,8 +1672,13 @@ async function onInbodyPicked(file) {
     const r = await extractHealthData(base64, mediaType);
     if (r.gym) {
       const res = applyGymSheet(r.gym);
+      // 記録先の日付を必ず表示する：日付誤読で別の日に保存された場合に気づけるようにする
+      let resJP = "";
+      if (res) { const [ry, rm, rd] = res.key.split("-").map(Number); resJP = fmtJP(new Date(ry, rm - 1, rd)); }
       errMsg = !res ? "用紙の数値を読み取れませんでした。手書き数字がはっきり写るように撮り直してみてください。"
-        : res.n === 0 ? "この用紙の内容はすでに記録済みです（二重登録はしていません）。" : "";
+        : res.n === 0 ? `この用紙の内容は${resJP}の分としてすでに記録済みです（二重登録はしていません）。`
+        : res.key === toKey(logicalToday()) ? `用紙から${res.n}種目を今日（${resJP}）の分として記録しました。`
+        : `用紙の日付を「${resJP}」と読み取り、その日の分として記録しました。今日の用紙の場合は、日付欄がはっきり写るように撮り直して再アップしてください。`;
     } else if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null && r.steps == null && !r.aerobic) {
       errMsg = "数値を読み取れませんでした。数値が写った画面で撮り直してみてください。";
     } else {
