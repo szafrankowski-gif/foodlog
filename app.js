@@ -222,7 +222,7 @@ const MENU = {
     { id: "legpress",  name: "レッグプレス",             spec: "最終セットのみ記録（枚）" },
     { id: "legcurl",   name: "レッグカール",             spec: "最終セットのみ記録（kg）" },
     { id: "legext",    name: "レッグエクステンション",   spec: "最終セットのみ記録（kg）" },
-    { id: "backpress", name: "バックプレス",             spec: "最終セットのみ記録（段）" },
+    { id: "backpress", name: "バックプレス",             spec: "最終セットのみ記録（段・補助-10kg）" },
     { id: "sideraise", name: "サイドレイズ（マシン）",   spec: "最終セットのみ記録（kg）" },
     { id: "pressdown", name: "プレスダウン",             spec: "最終セットのみ記録（kg）" },
     { id: "calfgym",   name: "カーフレイズ（ジム）",     spec: "最終セットのみ記録（段）" },
@@ -819,12 +819,14 @@ const fmtLoad = (l) => { const s = String(l ?? ""); return /^[+＋]\d/.test(s) ?
 // レッグプレスはジム実測（2026-11-19・カード余白の書き込み）。他マシンの実測が手に入り次第この表に同形式で追加する
 const LIFT_CONV = {
   legpress: { unit: "枚", kg: (n) => 21.6 + (n - 1) * 14.4 }, // 1枚=21.6kg・以降1枚ごとに+14.4kg
+  backpress: { note: "補助-10kg" }, // 段数で重さが決まるマシンだが負荷軽減機構があり、常時-10kgで実施
 };
 // 「4枚（64.8kg）」の参考表示つき負荷表記。換算情報がない種目はfmtLoadそのまま
 function fmtLoadConv(ex, load) {
   const base = fmtLoad(load);
   const cv = LIFT_CONV[ex];
   if (!cv) return base;
+  if (cv.note) return `${base}（${cv.note}）`;
   const m = new RegExp("^([\\d.]+)" + cv.unit + "$").exec(String(load ?? ""));
   if (!m) return base;
   return `${base}（${Math.round(cv.kg(Number(m[1])) * 10) / 10}kg）`;
