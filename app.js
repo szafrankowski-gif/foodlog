@@ -789,6 +789,12 @@ const gymUnitOf = (ex) => {
   const m = /^[\d.]+(.+)$/.exec(String(def.loads[0]));
   return m ? m[1] : null;
 };
+// 用紙の印字種目構成（読取結果に欠けがあったとき、どの種目が落ちたかを伝えるために使う）
+const GYM_SHEET_EXES = {
+  A: ["benchM", "deckfly", "latpull", "pulleyrow", "machcurl", "conccurl", "situp", "backext"],
+  B: ["backpress", "sideraise", "pressdown", "legpress", "legcurl", "legext", "calfgym"],
+};
+const liftLabelOf = (ex) => { const d = LIFT_DEF.find((e) => e.id === ex); return d ? d.label : ex; };
 // 挙上カードの種目チップを当日のactで絞る（ジム日はそのジムの種目、自宅系・act無しは自宅種目。カスタム種目は常に表示）
 const GYM_A_LIFTS = ["benchM", "deckfly", "latpull", "pulleyrow", "machcurl", "situp"];
 const GYM_B_LIFTS = ["legpress", "legcurl", "legext", "backpress", "sideraise", "pressdown", "calfgym"];
@@ -1333,7 +1339,7 @@ async function extractHealthData(base64, mediaType) {
 - date: 記入済みのいちばん右（＝最新）の日付列の日付（"11/15"形式）。手書きのため「1」「4」「7」などの見分けは慎重に。読めない・自信が持てなければnull（nullなら今日の分として扱う）
 - rows: その最新列について、種目ごとに最下段の記入済みセット（3s=90%の行。3sが空欄なら記入のある最後の行）を1件：
   {"name":"用紙の種目名","load":数値,"unit":"kg"または"段"または"枚","reps":数値orNull}
-  単位は用紙の印字・手書きに従う。斜線で消された種目・その列が空欄の種目は含めない。手書き数字が読めない値はその種目ごと省く（推測で埋めない）。
+  単位は用紙の印字・手書きに従う。書き直し・訂正で数字が重なっているセルは、訂正後の最終の値を採用する。3sが空欄のときは必ず1s/2sの最後の記入行を返す。斜線で消された種目・その列が空欄の種目は含めない。手書き数字がどうしても読み分けられない値だけ、その種目ごと省く（推測で埋めない）。
 ジム用紙でなければ "gym" はnull。
 
 出力はJSONオブジェクトのみ：
@@ -1396,6 +1402,9 @@ function applyGymSheet(gym) {
     checkIds.push(ex);
   }
   if (!recs.length) return dup ? { key, n: 0, dup } : null;
+  // 用紙の印字種目のうち、この読取でも既存記録でも埋まらなかったもの（＝読み落としの可能性）
+  const missing = (GYM_SHEET_EXES[gym.sheet] || []).filter((ex) =>
+    !(day.lifts || []).some((r) => r.ex === ex) && !recs.some((r) => r.ex === ex));
   const patch = { lifts: (day.lifts || []).concat(recs) };
   const act = gym.sheet === "B" ? "trainGymB" : gym.sheet === "A" ? "trainGymA" : null;
   if (act && !dayActs(day).includes(act)) patch.acts = dayActs(day).concat(act);
@@ -1403,7 +1412,7 @@ function applyGymSheet(gym) {
   const add = checkIds.filter((id) => !w.checks.includes(id));
   if (add.length) { w.checks = w.checks.concat(add); patch.workout = w; }
   updateDay(key, patch);
-  return { key, n: recs.length, act };
+  return { key, n: recs.length, act, missing };
 }
 
 // 写真を縮小してbase64化（通信量・コスト対策）
@@ -1677,10 +1686,13 @@ async function onInbodyPicked(file) {
       // 記録先の日付を必ず表示する：日付誤読で別の日に保存された場合に気づけるようにする
       let resJP = "";
       if (res) { const [ry, rm, rd] = res.key.split("-").map(Number); resJP = fmtJP(new Date(ry, rm - 1, rd)); }
+      const miss = res && res.missing && res.missing.length
+        ? `　読み取れなかった種目：${res.missing.map(liftLabelOf).join("・")}（用紙が空欄ならそのままで大丈夫です。記入したのに出ていない種目は挙上チップから入力してください）`
+        : "";
       errMsg = !res ? "用紙の数値を読み取れませんでした。手書き数字がはっきり写るように撮り直してみてください。"
         : res.n === 0 ? `この用紙の内容は${resJP}の分としてすでに記録済みです（二重登録はしていません）。`
-        : res.key === toKey(logicalToday()) ? `用紙から${res.n}種目を今日（${resJP}）の分として記録しました。`
-        : `用紙の日付を「${resJP}」と読み取り、その日の分として記録しました。今日の用紙の場合は、日付欄がはっきり写るように撮り直して再アップしてください。`;
+        : res.key === toKey(logicalToday()) ? `用紙から${res.n}種目を今日（${resJP}）の分として記録しました。${miss}`
+        : `用紙の日付を「${resJP}」と読み取り、その日の分として記録しました。今日の用紙の場合は、日付欄がはっきり写るように撮り直して再アップしてください。${miss}`;
     } else if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null && r.steps == null && !r.aerobic) {
       errMsg = "数値を読み取れませんでした。数値が写った画面で撮り直してみてください。";
     } else {
