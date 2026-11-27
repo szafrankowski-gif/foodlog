@@ -1378,8 +1378,8 @@ const GYM_SHEET_MAP = [
   [/プーリー|ロウ|ロー/, "pulleyrow"],
 ];
 // 読み取ったジム用紙を記録に反映：挙上（最終セットのみ）＋act＋メニューチェック。対象日は用紙の最新列の日付（読めなければ表示中の日）
-function applyGymSheet(gym) {
-  let key = toKey(cursor);
+function applyGymSheet(gym, fallbackKey) {
+  let key = fallbackKey || toKey(cursor); // キュー処理では送信時点の表示日を使う（処理待ちの間に日付移動しても影響しない）
   const today = logicalToday();
   const dm = /^(\d{1,2})\/(\d{1,2})$/.exec(String(gym.date || "").trim());
   if (dm) {
@@ -1595,6 +1595,72 @@ function parseLocalInput(text) {
   return { patch, moves };
 }
 
+// ---------- AIジョブキュー（v5.5.1）：AI待ちで画面をロックしない ----------
+// 送信した瞬間に入力欄を解放し、解析中はリスト上のゴースト行で示す。結果は送信時点の日付・時刻で反映する。
+// テキストのジョブは端末に残し、アプリを閉じても次回起動時に自動再開。画像はlocalStorage容量の都合で残さない（閉じたら撮り直し）
+const AIQ_KEY = "mealog:aiq";
+let aiJobs = [];      // {id, kind:"meal"|"photo"|"sheet", key, text, img:{base64,mediaType}|null, hhmm, state:"wait"|"run"|"error", err}
+let aiqRunning = false;
+function aiqLoad() {
+  try {
+    const a = JSON.parse(localStorage.getItem(AIQ_KEY) || "[]");
+    aiJobs = (Array.isArray(a) ? a : []).filter((j) => j && j.kind === "meal" && j.key && j.text);
+  } catch (e) { aiJobs = []; }
+  aiJobs.forEach((j) => { if (j.state === "run") j.state = "wait"; });
+}
+function aiqSave() {
+  try {
+    localStorage.setItem(AIQ_KEY, JSON.stringify(aiJobs.filter((j) => j.kind === "meal")
+      .map((j) => ({ id: j.id, kind: j.kind, key: j.key, text: j.text, hhmm: j.hhmm, state: j.state === "run" ? "wait" : j.state, err: j.err || null }))));
+  } catch (e) {}
+}
+function aiqAdd(job) {
+  job.id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  job.state = "wait"; job.err = null;
+  aiJobs.push(job);
+  aiqSave();
+  render();
+  aiqRun();
+}
+function aiqCancel(id) { aiJobs = aiJobs.filter((j) => j.id !== id); aiqSave(); render(); }
+function aiqRetry(id) { const j = aiJobs.find((x) => x.id === id); if (j) { j.state = "wait"; j.err = null; aiqSave(); render(); aiqRun(); } }
+const aiqAlive = (id) => aiJobs.some((j) => j.id === id); // 実行中に✕されたジョブの結果は破棄する
+// 1件ずつ順に処理（同時多発でAPIを叩かない）。完了・エラーの反映は操作の合間に描画
+async function aiqRun() {
+  if (aiqRunning) return;
+  const job = aiJobs.find((j) => j.state === "wait");
+  if (!job) return;
+  aiqRunning = true; job.state = "run"; renderWhenIdle();
+  try {
+    if (job.kind === "sheet") {
+      const r = await extractHealthData(job.img.base64, job.img.mediaType);
+      if (aiqAlive(job.id)) { applySheetResult(job, r); aiJobs = aiJobs.filter((j) => j.id !== job.id); }
+    } else {
+      const items = job.kind === "photo"
+        ? await estimateFromPhoto(job.img.base64, job.img.mediaType, job.text || "")
+        : await estimateNutrition(job.text);
+      if (aiqAlive(job.id)) {
+        if (!items.length) {
+          job.state = "error";
+          job.err = job.kind === "photo" ? "写真から品目を読み取れませんでした（✕で取り消し→テキストで補足を）" : "読み取れませんでした（タップで再試行・✕で取り消し）";
+        } else {
+          updateDayQuiet(job.key, { foods: getDay(job.key).foods.concat(stampFoods(items, job.key, job.hhmm)), comment: null });
+          aiJobs = aiJobs.filter((j) => j.id !== job.id);
+        }
+      }
+    }
+  } catch (e) {
+    if (aiqAlive(job.id)) {
+      job.state = "error";
+      job.err = (e && e.message === "NO_KEY") ? "APIキー未登録（設定タブで登録→タップで再試行）"
+        : `できませんでした：${(e && e.message) || "通信を確認してください"}（タップで再試行）`;
+    }
+  } finally {
+    aiqRunning = false; aiqSave(); renderWhenIdle();
+    if (aiJobs.some((j) => j.state === "wait")) aiqRun();
+  }
+}
+
 async function submitText() {
   const t = inputText.trim();
   if (!t || busy) return;
@@ -1629,37 +1695,22 @@ async function submitText() {
     return;
   }
   if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると送信できます。"; render(); return; }
-  busy = true; errMsg = ""; render();
-  try {
-    const items = await estimateNutrition(t);
-    if (!items.length) errMsg = "うまく読み取れませんでした。言い方を変えて試してください。";
-    else {
-      const key = toKey(cursor);
-      const day = getDay(key);
-      inputText = "";
-      updateDay(key, { foods: day.foods.concat(stampFoods(items, key)), comment: null });
-    }
-  } catch (e) {
-    errMsg = e.message === "NO_KEY" ? "設定タブでAPIキーを登録してください。" : `概算ができませんでした：${(e && e.message) || "通信とAPIキーを確認してください"}`;
-  } finally { busy = false; render(); }
+  // AI概算は待たない：キューに積んで即座に入力欄を返す（進行はリスト上のゴースト行で見える）
+  const key = toKey(cursor);
+  inputText = ""; errMsg = "";
+  aiqAdd({ kind: "meal", key, text: t, img: null, hhmm: toKey(logicalToday()) === key ? nowHHMM() : null });
 }
 
 async function onPhotoPicked(file) {
-  if (!file || busy) return;
+  if (!file) return;
   if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると写真解析が使えます。"; render(); return; }
-  busy = true; errMsg = ""; render();
   try {
-    const { base64, mediaType } = await resizeImage(file);
-    const items = await estimateFromPhoto(base64, mediaType, inputText.trim());
-    if (!items.length) errMsg = "写真から品目を読み取れませんでした。テキストで補足してみてください。";
-    else {
-      const key = toKey(cursor);
-      const day = getDay(key);
-      inputText = "";
-      updateDay(key, { foods: day.foods.concat(stampFoods(items, key, await photoHHMM(file, key))), comment: null });
-    }
-  } catch (e) { errMsg = `写真の解析ができませんでした：${(e && e.message) || "もう一度試してください"}`; }
-  finally { busy = false; render(); }
+    const key = toKey(cursor);
+    const [img, exifT] = await Promise.all([resizeImage(file), photoHHMM(file, key)]);
+    const hint = inputText.trim();
+    inputText = ""; errMsg = "";
+    aiqAdd({ kind: "photo", key, text: hint, img, hhmm: exifT || (toKey(logicalToday()) === key ? nowHHMM() : null) });
+  } catch (e) { errMsg = `写真を読み込めませんでした：${(e && e.message) || "もう一度試してください"}`; render(); }
 }
 
 async function getBakao() {
@@ -1675,14 +1726,19 @@ async function getBakao() {
 }
 
 async function onInbodyPicked(file) {
-  if (!file || busy) return;
+  if (!file) return;
   if (!apiKey()) { errMsg = "APIキーが未登録です。設定タブで登録すると読み取りが使えます。"; render(); return; }
-  busy = true; errMsg = ""; render();
   try {
-    const { base64, mediaType } = await resizeImage(file);
-    const r = await extractHealthData(base64, mediaType);
+    const img = await resizeImage(file);
+    errMsg = "";
+    aiqAdd({ kind: "sheet", key: toKey(cursor), text: "", img, hhmm: null });
+  } catch (e) { errMsg = `画像を読み込めませんでした：${(e && e.message) || "もう一度試してください"}`; render(); }
+}
+
+// 📊読取結果の反映（キューから呼ばれる。日付は送信時点の表示日=job.key基準）
+function applySheetResult(job, r) {
     if (r.gym) {
-      const res = applyGymSheet(r.gym);
+      const res = applyGymSheet(r.gym, job.key);
       // 記録先の日付を必ず表示する：日付誤読で別の日に保存された場合に気づけるようにする
       let resJP = "";
       if (res) { const [ry, rm, rd] = res.key.split("-").map(Number); resJP = fmtJP(new Date(ry, rm - 1, rd)); }
@@ -1696,7 +1752,7 @@ async function onInbodyPicked(file) {
     } else if (r.weight == null && r.muscle == null && r.fatpct == null && r.sleep == null && r.bedtime == null && r.waketime == null && r.rhr == null && r.steps == null && !r.aerobic) {
       errMsg = "数値を読み取れませんでした。数値が写った画面で撮り直してみてください。";
     } else {
-      const key = toKey(cursor);
+      const key = job.key;
       const patch = {};
       if (r.weight != null) patch.weight = String(r.weight);
       if (r.muscle != null) patch.muscle = r.muscle;
@@ -1710,10 +1766,8 @@ async function onInbodyPicked(file) {
         const cur = dayActs(getDay(key));
         if (!cur.includes("aerobic")) patch.acts = cur.concat("aerobic");
       }
-      updateDay(key, patch);
+      updateDayQuiet(key, patch);
     }
-  } catch (e) { errMsg = `読み取りができませんでした：${(e && e.message) || "もう一度試してください"}`; }
-  finally { busy = false; render(); }
 }
 
 function removeFood(i) {
@@ -2247,9 +2301,18 @@ function renderLog() {
         const rows = day.foods.map((f, i) => ({ o: "f", t: f.t, i, f }))
           .concat((day.moves || []).map((mv, i) => ({ o: "m", t: mv.t, i, mv })))
           .concat(dayActs(day).map((a) => ({ o: "a", t: (day.actTimes || {})[a] ?? null, a })));
-        if (!rows.length) return `<div class="emptymsg">まだ記録がありません。写真か一言でどうぞ。</div>`;
+        // AI解析待ち・エラーのゴースト行（この日に送信した分だけ）。確定行の後ろに置く
+        const ghost = aiJobs.filter((j) => j.key === key && j.kind !== "sheet").map((j) => `
+          <div class="foodrow" style="opacity:.8">
+            <span class="timechip mono" style="border-style:dashed">${esc(j.hhmm || "--:--")}</span>
+            <div class="foodname">${j.state === "error"
+              ? `<button data-airetry="${j.id}" style="background:none;border:none;padding:0;text-align:left;cursor:pointer;color:var(--amber);font-size:14px;line-height:1.5;font-family:inherit">⚠️ ${esc((j.kind === "photo" ? "📷写真" : j.text).slice(0, 22))}：${esc(j.err || "")}</button>`
+              : `<span class="nm" style="color:var(--muted)"><span class="spin">◐</span> ${j.kind === "photo" ? "📷 写真を解析中…" : `概算中… 「${esc(j.text.slice(0, 18))}」`}</span>`}</div>
+            <div class="foodnums"><button class="delbtn" data-aicancel="${j.id}">✕</button></div>
+          </div>`).join("");
+        if (!rows.length && !ghost) return `<div class="emptymsg">まだ記録がありません。写真か一言でどうぞ。</div>`;
         rows.sort((a, b) => tmin(a.t) - tmin(b.t));
-        return rows.map((r) => r.o === "f" ? `
+        return ghost + rows.map((r) => r.o === "f" ? `
           <div class="foodrow">
             <button class="timechip mono" data-ftime="${r.i}" title="タップで時刻を修正">${r.f.t ? esc(r.f.t) : "--:--"}</button>
             <div class="foodname"><span class="nm">${esc(r.f.name)}</span><span class="badges">${r.f.veg?"🥬":""}${r.f.omega3?"🐟":""}${r.f.fiber?"🌾":""}</span></div>
@@ -2402,13 +2465,16 @@ function renderLog() {
 
     <div class="stickybar">
       <div class="inputrow">
-        <button class="iconbtn" data-photo ${busy?"disabled":""} title="食事の写真">📷</button>
-        <button class="iconbtn" data-inbody ${busy?"disabled":""} title="測定スクショ（体重・歩数・睡眠等）">📊</button>
-        <textarea class="mealinput" rows="2" placeholder="食べたもの／散歩30分／体重60.2" ${busy?"disabled":""}>${esc(inputText)}</textarea>
-        <button class="sendbtn" data-send ${busy?"disabled":""}>${busy?'<span class="spin">◐</span>':"⏎"}</button>
+        <button class="iconbtn" data-photo title="食事の写真">📷</button>
+        <button class="iconbtn" data-inbody title="測定スクショ（体重・歩数・睡眠等）">📊</button>
+        <textarea class="mealinput" rows="2" placeholder="食べたもの／散歩30分／体重60.2">${esc(inputText)}</textarea>
+        <button class="sendbtn" data-send>⏎</button>
       </div>
-      <div class="hint">${busy ? "解析中…" : apiKey() ? "食事はAIが自動概算。「散歩30分」「体重60.2」「睡眠7.5」もここでOK。" : "「散歩30分」「体重60.2」「睡眠7.5」は登録なしで使えます。AI概算には設定タブでAPIキー登録が必要。"}</div>
+      <div class="hint">${apiKey() ? "食事はAIが自動概算（送信したら待たずに次の操作OK）。「散歩30分」「体重60.2」「睡眠7.5」もここで。" : "「散歩30分」「体重60.2」「睡眠7.5」は登録なしで使えます。AI概算には設定タブでAPIキー登録が必要。"}</div>
       ${errMsg ? `<div class="errmsg">${esc(errMsg)}</div>` : ""}
+      ${aiJobs.filter((j) => j.kind === "sheet").map((j) => j.state === "error"
+        ? `<div class="errmsg">📊 ${esc(j.err || "読み取りができませんでした")}　<button class="btn-s" data-airetry="${j.id}">再試行</button> <button class="btn-s" data-aicancel="${j.id}">✕</button></div>`
+        : `<div class="hint"><span class="spin">◐</span> 📊 画像を読み取り中…（待たずに操作できます）</div>`).join("")}
     </div>
   `;
 }
@@ -2936,6 +3002,8 @@ function bindEvents() {
     ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitText(); });
   }
   const send = $("[data-send]"); if (send) send.addEventListener("click", submitText);
+  document.querySelectorAll("[data-aicancel]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); aiqCancel(b.dataset.aicancel); }));
+  document.querySelectorAll("[data-airetry]").forEach((b) => b.addEventListener("click", () => aiqRetry(b.dataset.airetry)));
   const photo = $("[data-photo]"); if (photo) photo.addEventListener("click", () => $("#photoInput").click());
   document.querySelectorAll("[data-inbody]").forEach((b) =>
     b.addEventListener("click", () => $("#inbodyInput").click()));
@@ -3259,6 +3327,7 @@ if ("serviceWorker" in navigator) {
 
 // 起動
 load();
+aiqLoad();
 // 起動時同期：初回pullが終わるまでpushしない（他端末のデータ保護）
 if (ghToken()) {
   (async () => {
@@ -3283,3 +3352,4 @@ window.matchMedia("(min-width: 900px)").addEventListener("change", () => render(
   }
 })();
 render();
+aiqRun(); // 前回閉じたときに未処理だったテキスト概算を自動再開
