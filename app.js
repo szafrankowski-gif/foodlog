@@ -2992,7 +2992,8 @@ function bindEvents() {
       const v = inp.value.trim();
       if (v === "" || isNaN(Number(v))) delete cur[inp.dataset.measfield];
       else cur[inp.dataset.measfield] = Number(v);
-      updateDay(key, { meas: cur });
+      updateDayQuiet(key, { meas: cur }); // キーボード格納と同時の全再描画は硬直の元：操作の合間まで待つ
+      renderWhenIdle();
     }));
   document.querySelectorAll("[data-gaugetoggle]").forEach((b) =>
     b.addEventListener("click", () => { gaugeOpen = !gaugeOpen; render(); }));
@@ -3089,7 +3090,9 @@ function bindEvents() {
   document.querySelectorAll("[data-field]").forEach((inp) =>
     inp.addEventListener("change", () => {
       const v = inp.value.replace(/[^0-9.]/g, "");
-      updateDay(toKey(cursor), { [inp.dataset.field]: v || null });
+      // changeはiOSでキーボード格納と同時に発火する：その瞬間の全DOM差し替えは硬直の元なので、描画は操作の合間まで待つ
+      updateDayQuiet(toKey(cursor), { [inp.dataset.field]: v || null });
+      renderWhenIdle();
     }));
   const mdel = $("[data-measdel]"); if (mdel) mdel.addEventListener("click", () => {
     if (confirm("この日の測定データ（体重・筋量・体脂肪・睡眠・就寝起床・心拍・歩数）を削除しますか？食事や運動の記録は残ります。")) {
@@ -3120,14 +3123,16 @@ function bindEvents() {
     }));
   const md = $("[data-mood]"); if (md) {
     md.addEventListener("change", () => {
-      updateDay(toKey(cursor), { mood: md.value.trim() || null });
+      updateDayQuiet(toKey(cursor), { mood: md.value.trim() || null });
+      renderWhenIdle();
     });
   }
   const wn = $("[data-wnote]"); if (wn) {
     wn.addEventListener("change", () => {
       const key = toKey(cursor);
       const day = getDay(key);
-      updateDay(key, { workout: Object.assign({ checks: [] }, day.workout || {}, { note: wn.value }) });
+      updateDayQuiet(key, { workout: Object.assign({ checks: [] }, day.workout || {}, { note: wn.value }) });
+      renderWhenIdle();
     });
   }
 
