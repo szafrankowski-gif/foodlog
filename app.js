@@ -2306,9 +2306,9 @@ function renderLog() {
           <div class="foodrow" style="opacity:.8">
             <span class="timechip mono" style="border-style:dashed">${esc(j.hhmm || "--:--")}</span>
             <div class="foodname">${j.state === "error"
-              ? `<button data-airetry="${j.id}" style="background:none;border:none;padding:0;text-align:left;cursor:pointer;color:var(--amber);font-size:14px;line-height:1.5;font-family:inherit">⚠️ ${esc((j.kind === "photo" ? "📷写真" : j.text).slice(0, 22))}：${esc(j.err || "")}</button>`
+              ? `<button data-aiqretry="${j.id}" style="background:none;border:none;padding:0;text-align:left;cursor:pointer;color:var(--amber);font-size:14px;line-height:1.5;font-family:inherit">⚠️ ${esc((j.kind === "photo" ? "📷写真" : j.text).slice(0, 22))}：${esc(j.err || "")}</button>`
               : `<span class="nm" style="color:var(--muted)"><span class="spin">◐</span> ${j.kind === "photo" ? "📷 写真を解析中…" : `概算中… 「${esc(j.text.slice(0, 18))}」`}</span>`}</div>
-            <div class="foodnums"><button class="delbtn" data-aicancel="${j.id}">✕</button></div>
+            <div class="foodnums"><button class="delbtn" data-aiqdel="${j.id}">✕</button></div>
           </div>`).join("");
         if (!rows.length && !ghost) return `<div class="emptymsg">まだ記録がありません。写真か一言でどうぞ。</div>`;
         rows.sort((a, b) => tmin(a.t) - tmin(b.t));
@@ -2473,7 +2473,7 @@ function renderLog() {
       <div class="hint">${apiKey() ? "食事はAIが自動概算（送信したら待たずに次の操作OK）。「散歩30分」「体重60.2」「睡眠7.5」もここで。" : "「散歩30分」「体重60.2」「睡眠7.5」は登録なしで使えます。AI概算には設定タブでAPIキー登録が必要。"}</div>
       ${errMsg ? `<div class="errmsg">${esc(errMsg)}</div>` : ""}
       ${aiJobs.filter((j) => j.kind === "sheet").map((j) => j.state === "error"
-        ? `<div class="errmsg">📊 ${esc(j.err || "読み取りができませんでした")}　<button class="btn-s" data-airetry="${j.id}">再試行</button> <button class="btn-s" data-aicancel="${j.id}">✕</button></div>`
+        ? `<div class="errmsg">📊 ${esc(j.err || "読み取りができませんでした")}　<button class="btn-s" data-aiqretry="${j.id}">再試行</button> <button class="btn-s" data-aiqdel="${j.id}">✕</button></div>`
         : `<div class="hint"><span class="spin">◐</span> 📊 画像を読み取り中…（待たずに操作できます）</div>`).join("")}
     </div>
   `;
@@ -3002,8 +3002,8 @@ function bindEvents() {
     ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitText(); });
   }
   const send = $("[data-send]"); if (send) send.addEventListener("click", submitText);
-  document.querySelectorAll("[data-aicancel]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); aiqCancel(b.dataset.aicancel); }));
-  document.querySelectorAll("[data-airetry]").forEach((b) => b.addEventListener("click", () => aiqRetry(b.dataset.airetry)));
+  document.querySelectorAll("[data-aiqdel]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); aiqCancel(b.dataset.aiqdel); }));
+  document.querySelectorAll("[data-aiqretry]").forEach((b) => b.addEventListener("click", () => aiqRetry(b.dataset.aiqretry)));
   const photo = $("[data-photo]"); if (photo) photo.addEventListener("click", () => $("#photoInput").click());
   document.querySelectorAll("[data-inbody]").forEach((b) =>
     b.addEventListener("click", () => $("#inbodyInput").click()));
