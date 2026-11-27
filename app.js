@@ -435,7 +435,38 @@ function updateDayQuiet(key, patch) {
 let lastInteract = 0, pointerIsDown = false, lastScrollAt = 0;
 document.addEventListener("pointerdown", () => { lastInteract = Date.now(); pointerIsDown = true; }, true);
 document.addEventListener("pointerup", () => { lastInteract = Date.now(); pointerIsDown = false; }, true);
-document.addEventListener("pointercancel", () => { pointerIsDown = false; }, true);
+document.addEventListener("pointercancel", () => { pointerIsDown = false; tapInfo = null; }, true);
+// ---------- タップ認識（v5.5.2）：iOSでキーボードを閉じる1回目のタップが消える問題の対策 ----------
+// clickは「指を離した瞬間にその座標にある要素」へ飛ぶため、キーボード格納やDOM差し替えでレイアウトが
+// 動くと外れて消える。1タップ系のトグルは指を置いた時点の要素を覚え、pointerupで自前発火する（clickに頼らない）
+const TAP_SEL = "[data-supp],[data-movechip],[data-drillchip]";
+let tapInfo = null;
+document.addEventListener("pointerdown", (e) => {
+  const t = e.target && e.target.closest ? e.target.closest(TAP_SEL) : null;
+  tapInfo = t ? { t, x: e.clientX, y: e.clientY, at: Date.now() } : null;
+}, true);
+document.addEventListener("pointerup", (e) => {
+  const info = tapInfo; tapInfo = null;
+  if (!info || Date.now() - info.at > 600) return;                      // 長押しはタップ扱いしない
+  if (Math.hypot(e.clientX - info.x, e.clientY - info.y) > 12) return;  // スクロールはタップ扱いしない
+  activateTap(info.t);
+}, true);
+function activateTap(el) {
+  const key = toKey(cursor);
+  const day = getDay(key);
+  if (el.dataset.supp) {
+    if (el.dataset.supp === "creatine") updateDayQuiet(key, { creatine: !creatineOn(day) });
+    else updateDayQuiet(key, { vitd: !vitdOn(day) });
+    try { el.classList.toggle("on"); } catch (e) {}
+    renderSoon();
+  } else if (el.dataset.movechip) {
+    const [kind, min] = el.dataset.movechip.split(":");
+    const t = toKey(logicalToday()) === key ? new Date().toTimeString().slice(0, 5) : null;
+    updateDay(key, { moves: (day.moves || []).concat({ kind, min: Number(min), t }) });
+  } else if (el.hasAttribute("data-drillchip")) {
+    updateDay(key, { drill: !day.drill });
+  }
+}
 document.addEventListener("keydown", () => { lastInteract = Date.now(); }, true);
 document.addEventListener("scroll", () => { lastScrollAt = Date.now(); }, true);
 // ジェスチャ（指が触れている・スクロール慣性中）の最中はDOMを差し替えない：iOSはタッチ中の差し替えでタッチ状態が壊れて固まったように見える
@@ -2953,10 +2984,6 @@ function bindEvents() {
     b.addEventListener("click", () => { menuOpen = !menuOpen; render(); }));
   const pt = $("[data-pacetoggle]"); if (pt) pt.addEventListener("click", () => { paceOpen = !paceOpen; render(); });
   const mj = $("[data-measjump]"); if (mj) mj.addEventListener("click", () => { view = "measure"; render(); });
-  const dr = $("[data-drillchip]"); if (dr) dr.addEventListener("click", () => {
-    const key = toKey(cursor);
-    updateDay(key, { drill: !getDay(key).drill });
-  });
   document.querySelectorAll("[data-measfield]").forEach((inp) =>
     inp.addEventListener("change", () => {
       // 測定ビューの構造化入力は常に「今日（論理日）」へ記録
@@ -3027,15 +3054,7 @@ function bindEvents() {
 
   const bk = $("[data-bakao]"); if (bk) bk.addEventListener("click", getBakao);
 
-  document.querySelectorAll("[data-movechip]").forEach((b) =>
-    b.addEventListener("click", () => {
-      const [kind, min] = b.dataset.movechip.split(":");
-      const key = toKey(cursor);
-      const day = getDay(key);
-      // 時刻は今日なら現在時刻、過去日はnull（原則8：時刻を捏造しない）
-      const t = toKey(logicalToday()) === key ? new Date().toTimeString().slice(0, 5) : null;
-      updateDay(key, { moves: (day.moves || []).concat({ kind, min: Number(min), t }) });
-    }));
+  // [data-movechip][data-supp][data-drillchip]はタップ認識（activateTap）で処理：clickバインド不要
   document.querySelectorAll("[data-mdel]").forEach((b) =>
     b.addEventListener("click", () => {
       const key = toKey(cursor);
@@ -3071,16 +3090,6 @@ function bindEvents() {
     inp.addEventListener("change", () => {
       const v = inp.value.replace(/[^0-9.]/g, "");
       updateDay(toKey(cursor), { [inp.dataset.field]: v || null });
-    }));
-  document.querySelectorAll("[data-supp]").forEach((b) =>
-    b.addEventListener("click", () => {
-      const key = toKey(cursor);
-      const day = getDay(key);
-      const which = b.dataset.supp;
-      if (which === "creatine") updateDayQuiet(key, { creatine: !creatineOn(day) });
-      else updateDayQuiet(key, { vitd: !vitdOn(day) });
-      b.classList.toggle("on");
-      renderSoon();
     }));
   const mdel = $("[data-measdel]"); if (mdel) mdel.addEventListener("click", () => {
     if (confirm("この日の測定データ（体重・筋量・体脂肪・睡眠・就寝起床・心拍・歩数）を削除しますか？食事や運動の記録は残ります。")) {
