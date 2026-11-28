@@ -798,7 +798,7 @@ const LIFT_DEF = [
   { id: "deckfly",   label: "デッキフライ",     gym: true, loads: gymLoads("lb", 20, 200, 10) }, // Paramount製スタック：刻印はポンド（20〜200・10刻み）
   { id: "latpull",   label: "ラットプル",       gym: true, loads: gymLoads("段", 1, 14, 1) },
   { id: "pulleyrow", label: "プーリーロウ",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
-  { id: "machcurl",  label: "マシンカール",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
+  { id: "machcurl",  label: "マシンカール",     gym: true, loads: gymLoads("kg", 10, 80, 5) }, // kg刻印スタック（10〜80kg・5刻み）を実機写真で確認
   { id: "situp",     label: "シットアップ",     gym: true, loads: gymLoads("lb", 20, 170, 10) }, // Paramount製スタック：刻印はポンド（20〜170・10刻み）
   // ジムB 脚＋肩＋三頭
   { id: "legpress",  label: "レッグプレス",     gym: true, loads: gymLoads("枚", 1, 14, 1) },
