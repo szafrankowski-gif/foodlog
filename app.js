@@ -857,6 +857,7 @@ const fmtLoad = (l) => { const s = String(l ?? ""); return /^[+＋]\d/.test(s) ?
 const LIFT_CONV = {
   legpress: { unit: "枚", kg: (n) => 21.6 + (n - 1) * 14.4 }, // 1枚=21.6kg・以降1枚ごとに+14.4kg
   backpress: { note: "補助-10kg" }, // 段数で重さが決まるマシンだが負荷軽減機構があり、常時-10kgで実施
+  calfgym: { unit: "段", kg: (n) => (10 + (n - 1) * 15) * 0.45359237 }, // スタック刻印はポンド：1段=10lb・以降1段ごとに+15lb
 };
 // 「4枚（64.8kg）」の参考表示つき負荷表記。換算情報がない種目はfmtLoadそのまま
 function fmtLoadConv(ex, load) {
