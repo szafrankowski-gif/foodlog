@@ -212,18 +212,18 @@ function onceNote(storeKey, scope, active) {
 const MENU = {
   trainGymA: [ // 押す＋引く（指導員管理・最終セットのみ記録）
     { id: "benchM",    name: "ベンチプレス（マシン）", spec: "指導員の指示重量・最終セットのみ記録（kg）" },
-    { id: "deckfly",   name: "デッキフライ",           spec: "最終セットのみ記録（kg）" },
+    { id: "deckfly",   name: "デッキフライ",           spec: "最終セットのみ記録（lb・ポンド刻印）" },
     { id: "latpull",   name: "ラットプルダウン",       spec: "最終セットのみ記録（段）" },
     { id: "pulleyrow", name: "プーリーロウ",           spec: "最終セットのみ記録（kg）" },
     { id: "machcurl",  name: "マシンカール（任意）",   spec: "最終セットのみ記録（kg）" },
-    { id: "situp",     name: "シットアップ（任意）",   spec: "最終セットのみ記録（段）" },
+    { id: "situp",     name: "シットアップ（任意）",   spec: "最終セットのみ記録（lb・ポンド刻印）" },
   ],
   trainGymB: [ // 脚＋肩＋三頭（指導員管理・最終セットのみ記録）
     { id: "legpress",  name: "レッグプレス",             spec: "最終セットのみ記録（枚）" },
     { id: "legcurl",   name: "レッグカール",             spec: "最終セットのみ記録（kg）" },
     { id: "legext",    name: "レッグエクステンション",   spec: "最終セットのみ記録（kg）" },
     { id: "backpress", name: "バックプレス",             spec: "最終セットのみ記録（段・補助-10kg）" },
-    { id: "sideraise", name: "サイドレイズ（マシン）",   spec: "最終セットのみ記録（kg）" },
+    { id: "sideraise", name: "サイドレイズ（マシン）",   spec: "最終セットのみ記録（lb・ポンド刻印）" },
     { id: "pressdown", name: "プレスダウン",             spec: "最終セットのみ記録（kg）" },
     { id: "calfgym",   name: "カーフレイズ（ジム）",     spec: "最終セットのみ記録（段）" },
   ],
@@ -384,7 +384,7 @@ function migrateLiftUnit() {
       if (!r || !r.ex) continue;
       const u = gymUnitOf(r.ex);
       if (!u) continue;
-      const m = /^([\d.]+)(kg|段|枚)$/.exec(String(r.load ?? ""));
+      const m = /^([\d.]+)(kg|段|枚|lb)$/.exec(String(r.load ?? ""));
       if (m && m[2] !== u) r.load = m[1] + u;
     }
   }
@@ -795,17 +795,17 @@ const LIFT_DEF = [
   { id: "rdl",       label: "RDL(片脚)",    loads: ["KB16", "KB24"] },         // v5.2廃止（KBデッドに吸収）・過去記録の表示用に残置
   // ジムA 押す＋引く
   { id: "benchM",    label: "ベンチ(マシン)",   gym: true, loads: gymLoads("kg", 5, 70, 5) },
-  { id: "deckfly",   label: "デッキフライ",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
+  { id: "deckfly",   label: "デッキフライ",     gym: true, loads: gymLoads("lb", 20, 200, 10) }, // Paramount製スタック：刻印はポンド（20〜200・10刻み）
   { id: "latpull",   label: "ラットプル",       gym: true, loads: gymLoads("段", 1, 14, 1) },
   { id: "pulleyrow", label: "プーリーロウ",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
   { id: "machcurl",  label: "マシンカール",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
-  { id: "situp",     label: "シットアップ",     gym: true, loads: gymLoads("kg", 5, 80, 5) }, // 負荷はkg指定（用紙の例：70）
+  { id: "situp",     label: "シットアップ",     gym: true, loads: gymLoads("lb", 20, 170, 10) }, // Paramount製スタック：刻印はポンド（20〜170・10刻み）
   // ジムB 脚＋肩＋三頭
   { id: "legpress",  label: "レッグプレス",     gym: true, loads: gymLoads("枚", 1, 14, 1) },
   { id: "legcurl",   label: "レッグカール",     gym: true, loads: gymLoads("kg", 5, 70, 5) },
   { id: "legext",    label: "レッグエクステ",   gym: true, loads: gymLoads("kg", 5, 70, 5) },
   { id: "backpress", label: "バックプレス",     gym: true, loads: gymLoads("段", 1, 14, 1) },
-  { id: "sideraise", label: "サイドレイズ",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
+  { id: "sideraise", label: "サイドレイズ",     gym: true, loads: gymLoads("lb", 20, 170, 10) }, // Paramount製スタック：刻印はポンド（20〜170・10刻み）
   { id: "pressdown", label: "プレスダウン",     gym: true, loads: gymLoads("kg", 5, 50, 5) },
   { id: "calfgym",   label: "カーフ(ジム)",     gym: true, loads: gymLoads("段", 1, 14, 1) },
   // ジム記録用紙にあるがv5.2メニュー外の種目（用紙読取で記録されたときの表示・前回参照用）
@@ -858,6 +858,9 @@ const LIFT_CONV = {
   legpress: { unit: "枚", kg: (n) => 21.6 + (n - 1) * 14.4 }, // 1枚=21.6kg・以降1枚ごとに+14.4kg
   backpress: { note: "補助-10kg" }, // 段数で重さが決まるマシンだが負荷軽減機構があり、常時-10kgで実施
   calfgym: { unit: "段", kg: (n) => (10 + (n - 1) * 15) * 0.45359237 }, // スタック刻印はポンド：1段=10lb・以降1段ごとに+15lb
+  situp: { unit: "lb", kg: (n) => n * 0.45359237 },     // Paramount製スタック：数値刻印＝ポンド
+  sideraise: { unit: "lb", kg: (n) => n * 0.45359237 }, // 同上
+  deckfly: { unit: "lb", kg: (n) => n * 0.45359237 },   // 同上
 };
 // 「4枚（64.8kg）」の参考表示つき負荷表記。換算情報がない種目はfmtLoadそのまま
 function fmtLoadConv(ex, load) {
